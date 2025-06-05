@@ -65,6 +65,15 @@ if st.button("🔍 Analyze & Optimize"):
         st.subheader("✅ Optimized Query")
         st.code(optimized_sql, language='sql')
 
+        # 🧠 Inline AI Reviewer (only if optimized_sql exists)
+        if optimized_sql.strip():
+            if st.checkbox("🧠 Show Inline AI Review Comments"):
+                with st.spinner("Reviewing query line by line..."):
+                    reviewed = add_inline_comments(optimized_sql)
+                st.subheader("🧾 Inline Comments on Optimized Query")
+                st.code(reviewed, language="sql")
+
+
         st.subheader("💬 Optimization Explanation")
         st.write(explanation)
 
@@ -81,8 +90,8 @@ if st.button("🔍 Analyze & Optimize"):
         st.subheader("🔀 Before vs After Diff")
         st.code(diff_text, language='diff')
 
-        if st.checkbox("🧠 Show Inline AI Review Comments"):
-            with st.spinner("Reviewing query line by line..."):
-                reviewed = add_inline_comments(optimized_sql)
-            st.subheader("🧾 Inline Comments on Optimized Query")
-            st.code(reviewed, language="sql")
+        # if st.checkbox("🧠 Show Inline AI Review Comments"):
+        #     with st.spinner("Reviewing query line by line..."):
+        #         reviewed = add_inline_comments(optimized_sql)
+        #     st.subheader("🧾 Inline Comments on Optimized Query")
+        #     st.code(reviewed, language="sql")
