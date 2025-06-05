@@ -7,6 +7,7 @@ from optimizer.diff_viewer import generate_diff
 from optimizer.query_executor import execute_query
 from optimizer.line_commenter import add_inline_comments
 from optimizer.cost_estimator import estimate_query_cost
+from optimizer.auto_fixer import apply_auto_fixes
 import os
 
 # Load .env for local dev
@@ -41,6 +42,13 @@ if st.button("🔍 Analyze & Optimize"):
     if not query.strip():
         st.warning("Please upload or paste a SQL query.")
     else:
+        # 🪄 Auto-fix toggle
+        apply_fixes = st.checkbox("🪄 Auto-fix common SQL issues (SELECT *, no LIMIT, etc.)")
+
+        if apply_fixes:
+            query, fixes = apply_auto_fixes(query)
+            st.info("✅ Auto-fixes applied:\n" + "\n".join(f"- {fix}" for fix in fixes))
+
         with st.spinner("Analyzing query..."):
             issues = analyze_sql(query)
             optimized_sql = optimize_query(query)
@@ -51,6 +59,7 @@ if st.button("🔍 Analyze & Optimize"):
         st.session_state.original_query = query
         st.session_state.explanation = explanation
         st.session_state.issues = issues
+
 
 # ✅ SHOW OPTIMIZED OUTPUT
 if st.session_state.optimized_sql.strip():
