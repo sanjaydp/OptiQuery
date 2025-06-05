@@ -6,6 +6,7 @@ from optimizer.report_generator import generate_report
 from optimizer.diff_viewer import generate_diff
 from optimizer.query_executor import execute_query
 from optimizer.line_commenter import add_inline_comments
+from optimizer.cost_estimator import estimate_query_cost
 import os
 
 # Load .env for local dev
@@ -69,6 +70,19 @@ if st.session_state.optimized_sql.strip():
 
     st.subheader("💬 Optimization Explanation")
     st.write(st.session_state.explanation)
+
+    # 📊 COST ESTIMATION
+    cost_result = estimate_query_cost(st.session_state.optimized_sql)
+    st.subheader("📊 Query Cost Estimation")
+    st.markdown(f"**Score:** `{cost_result['score']} / 100`")
+    st.markdown(f"**Risk Level:** `{cost_result['risk']}`")
+
+    if cost_result["issues"]:
+        st.markdown("**⚠️ Potential Issues:**")
+        for issue in cost_result["issues"]:
+            st.markdown(f"- {issue}")
+    else:
+        st.markdown("✅ No major issues detected.")
 
     # 📥 DOWNLOAD REPORT
     report_md = generate_report(
