@@ -11,6 +11,12 @@ api_key = os.getenv("OPENAI_API_KEY")
 if not api_key:
     raise ValueError("OPENAI_API_KEY not found in environment variables.")
 
+import streamlit as st
+st.text(f"Loaded OPENAI_API_KEY: {api_key[:5] + '...' if api_key else 'None'}")
+
+if not api_key:
+    raise ValueError("OPENAI_API_KEY not found in environment variables.")
+
 client = OpenAI(api_key=api_key)
 
 def optimize_query(query: str) -> str:
