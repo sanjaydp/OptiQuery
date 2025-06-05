@@ -1,32 +1,23 @@
+import os
 from openai import OpenAI
 from dotenv import load_dotenv
-import os
 
-# Load the .env file
 load_dotenv()
 
-# Initialize OpenAI client
-api_key = os.getenv("OPENAI_API_KEY")
-
-if not api_key:
-    raise ValueError("OPENAI_API_KEY not found in environment variables.")
-
-import streamlit as st
-st.text(f"Loaded OPENAI_API_KEY: {api_key[:5] + '...' if api_key else 'None'}")
-
-if not api_key:
-    raise ValueError("OPENAI_API_KEY not found in environment variables.")
-
-client = OpenAI(api_key=api_key)
+def get_openai_client():
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        raise ValueError("OPENAI_API_KEY not found in environment variables.")
+    return OpenAI(api_key=api_key)
 
 def optimize_query(query: str) -> str:
+    client = get_openai_client()
     prompt = f"""You are a SQL optimization assistant. Improve the following query for performance:
 
 SQL Query:
 {query}
 
-Return only the improved SQL query.
-"""
+Return only the improved SQL query."""
     response = client.chat.completions.create(
         model="gpt-3.5-turbo",
         messages=[
@@ -38,6 +29,7 @@ Return only the improved SQL query.
     return response.choices[0].message.content.strip()
 
 def explain_optimization(original_query: str, optimized_query: str) -> str:
+    client = get_openai_client()
     prompt = f"""Explain the optimization differences between these two SQL queries.
 
 Original:
