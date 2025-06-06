@@ -2,6 +2,7 @@ import sqlite3  # or your preferred database module
 
 def execute_query(db_path, query):
     """Execute the SQL query and return the results."""
+    conn = None  # Initialize conn variable
     try:
         # Establish connection to the database
         conn = sqlite3.connect(db_path)
