@@ -13,9 +13,11 @@ import os
 import plotly.express as px
 import pandas as pd
 import openai
+from openai import OpenAI
 
 load_dotenv()
-openai.api_key = os.getenv("OPENAI_API_KEY")
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+# openai.api_key = os.getenv("OPENAI_API_KEY")
 
 st.set_page_config(page_title="OptiQuery – AI SQL Assistant", page_icon="🧠", layout="wide")
 st.markdown("<h1 style='color:#4B8BBE;'>🧠 OptiQuery: SQL Optimizer Assistant</h1>", unsafe_allow_html=True)
@@ -133,10 +135,11 @@ with st.sidebar:
     if user_question and st.session_state.optimized_sql.strip():
         with st.spinner("Getting AI response..."):
             chat_prompt = f"You are a SQL expert. Based on the following query, answer this: {user_question}\n\nSQL Query:\n{st.session_state.optimized_sql}"
-            response = openai.ChatCompletion.create(
+            response = client.chat.completions.create(
                 model="gpt-3.5-turbo",
                 messages=[{"role": "user", "content": chat_prompt}]
             )
+
             st.markdown(f"**Answer:** {response.choices[0].message.content.strip()}")
 
 st.markdown("---")
