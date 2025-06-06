@@ -14,9 +14,6 @@ import plotly.express as px
 import pandas as pd
 import openai
 from openai import OpenAI
-import markdown2
-import pdfkit
-import weasyprint
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
 import io
