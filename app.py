@@ -14,6 +14,8 @@ import plotly.express as px
 import pandas as pd
 import openai
 from openai import OpenAI
+import markdown2
+import pdfkit
 
 load_dotenv()
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
@@ -35,6 +37,11 @@ if "complexity_score" not in st.session_state:
     st.session_state.complexity_score = 0
 if "complexity_label" not in st.session_state:
     st.session_state.complexity_label = ""
+
+def convert_markdown_to_pdf(md_content: str) -> bytes:
+    """Converts markdown content to a PDF byte object."""
+    html_content = markdown2.markdown(md_content)
+    return pdfkit.from_string(html_content, False)
 
 def nl_to_sql(natural_language: str):
     """Converts natural language to SQL using GPT"""
@@ -149,6 +156,17 @@ if st.session_state.optimized_sql.strip():
         file_name="optiquery_report.md",
         mime="text/markdown"
     )
+
+    # NEW: Add PDF download
+    if st.button("📄 Download PDF Report"):
+        with st.spinner("Generating PDF..."):
+            pdf_bytes = convert_markdown_to_pdf(report_md)
+        st.download_button(
+            label="📄 Download PDF Report",
+            data=pdf_bytes,
+            file_name="optiquery_report.pdf",
+            mime="application/pdf"
+        )
 
     diff_text = generate_diff(st.session_state.original_query, st.session_state.optimized_sql)
     st.subheader("🔀 Before vs After Diff")
