@@ -7,21 +7,17 @@ from optimizer.diff_viewer import generate_diff
 from optimizer.query_executor import execute_query
 from optimizer.line_commenter import add_inline_comments
 from optimizer.cost_estimator import estimate_query_cost
-from optimizer.auto_fixer import apply_auto_fixes  # You must have this module
+from optimizer.auto_fixer import apply_auto_fixes
 import os
 import plotly.express as px
 import pandas as pd
 
-
-# Load env
 load_dotenv()
 
-# Streamlit Page Config
 st.set_page_config(page_title="OptiQuery – AI SQL Assistant", page_icon="🧠", layout="wide")
 st.markdown("<h1 style='color:#4B8BBE;'>🧠 OptiQuery: SQL Optimizer Assistant</h1>", unsafe_allow_html=True)
 db_path = None
 
-# Session states
 if "optimized_sql" not in st.session_state:
     st.session_state.optimized_sql = ""
 if "original_query" not in st.session_state:
@@ -31,7 +27,6 @@ if "explanation" not in st.session_state:
 if "issues" not in st.session_state:
     st.session_state.issues = []
 
-# Input area
 st.markdown("### 📋 Upload a `.sql` file or paste your SQL query below")
 uploaded_file = st.file_uploader("Upload SQL File", type=["sql"])
 query = ""
@@ -41,10 +36,8 @@ if uploaded_file:
 else:
     query = st.text_area("Paste your SQL query here", height=200)
 
-# Optimization mode choice
 fix_mode = st.radio("Choose optimization mode:", ["🪄 Auto-Fix First", "🤖 GPT Only"])
 
-# Analyze & Optimize Button
 if st.button("🔍 Analyze & Optimize"):
     if not query.strip():
         st.warning("Please upload or paste a SQL query.")
@@ -70,12 +63,11 @@ if st.button("🔍 Analyze & Optimize"):
                     optimized_sql = optimize_query(auto_fixed_sql)
                     explanation = explain_optimization(auto_fixed_sql, optimized_sql)
 
-                # Save to session
                 st.session_state.optimized_sql = optimized_sql
                 st.session_state.explanation = explanation
                 st.session_state.issues = issues
 
-        else:  # GPT Only
+        else:
             with st.spinner("Optimizing with GPT..."):
                 issues = analyze_sql(query)
                 optimized_sql = optimize_query(query)
@@ -85,7 +77,6 @@ if st.button("🔍 Analyze & Optimize"):
             st.session_state.explanation = explanation
             st.session_state.issues = issues
 
-# Results
 if st.session_state.optimized_sql.strip():
     st.subheader("📌 Identified Issues")
     for issue in st.session_state.issues:
@@ -121,7 +112,6 @@ if st.session_state.optimized_sql.strip():
     st.subheader("🔀 Before vs After Diff")
     st.code(diff_text, language='diff')
 
-    # Optional DB Tester
     st.markdown("### 🧪 Optional: Test Queries on a SQLite DB")
     db_file = st.file_uploader("Upload a SQLite `.db` file to test queries", type=["db"])
 
@@ -146,7 +136,6 @@ if st.session_state.optimized_sql.strip():
         else:
             st.error(f"❌ {result_opt['error']}")
 
-        # 📊 Performance Comparison Chart
         if result_orig["success"] and result_opt["success"]:
             st.markdown("### 📊 Query Performance Comparison")
 
@@ -166,7 +155,5 @@ if st.session_state.optimized_sql.strip():
                               title="📦 Row Count Comparison")
             st.plotly_chart(fig_rows, use_container_width=True)
 
-
-# Footer
 st.markdown("---")
 st.markdown("📦 [View Source Code on GitHub](https://github.com/yourusername/optiquery)")
