@@ -17,6 +17,9 @@ from openai import OpenAI
 import markdown2
 import pdfkit
 import weasyprint
+from reportlab.lib.pagesizes import letter
+from reportlab.pdfgen import canvas
+import io
 
 load_dotenv()
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
@@ -40,10 +43,24 @@ if "complexity_label" not in st.session_state:
     st.session_state.complexity_label = ""
 
 def convert_markdown_to_pdf(md_content: str) -> bytes:
-    """Converts markdown content to a PDF byte object using WeasyPrint."""
-    html_content = markdown2.markdown(md_content)
-    pdf_bytes = weasyprint.HTML(string=html_content).write_pdf()
-    return pdf_bytes
+    """Converts markdown content to a PDF byte object using ReportLab."""
+    buffer = io.BytesIO()
+    c = canvas.Canvas(buffer, pagesize=letter)
+    width, height = letter  # Keep the standard letter size
+    
+    # Write the markdown content line by line
+    y_position = height - 40  # Start at top of page
+    lines = md_content.splitlines()
+    for line in lines:
+        c.drawString(40, y_position, line)
+        y_position -= 12  # Move down for next line
+        if y_position < 40:  # If we reach the bottom of the page
+            c.showPage()  # Start a new page
+            y_position = height - 40
+
+    c.save()
+    buffer.seek(0)
+    return buffer.read()
 
 def nl_to_sql(natural_language: str):
     """Converts natural language to SQL using GPT"""
