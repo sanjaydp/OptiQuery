@@ -8,11 +8,14 @@ from optimizer.query_executor import execute_query
 from optimizer.line_commenter import add_inline_comments
 from optimizer.cost_estimator import estimate_query_cost
 from optimizer.auto_fixer import apply_auto_fixes
+from optimizer.complexity_analyzer import calculate_query_complexity  # NEW
 import os
 import plotly.express as px
 import pandas as pd
+import openai
 
 load_dotenv()
+openai.api_key = os.getenv("OPENAI_API_KEY")
 
 st.set_page_config(page_title="OptiQuery – AI SQL Assistant", page_icon="🧠", layout="wide")
 st.markdown("<h1 style='color:#4B8BBE;'>🧠 OptiQuery: SQL Optimizer Assistant</h1>", unsafe_allow_html=True)
@@ -26,6 +29,10 @@ if "explanation" not in st.session_state:
     st.session_state.explanation = ""
 if "issues" not in st.session_state:
     st.session_state.issues = []
+if "complexity_score" not in st.session_state:
+    st.session_state.complexity_score = 0
+if "complexity_label" not in st.session_state:
+    st.session_state.complexity_label = ""
 
 st.markdown("### 📋 Upload a `.sql` file or paste your SQL query below")
 uploaded_file = st.file_uploader("Upload SQL File", type=["sql"])
@@ -77,6 +84,10 @@ if st.button("🔍 Analyze & Optimize"):
             st.session_state.explanation = explanation
             st.session_state.issues = issues
 
+        score, label = calculate_query_complexity(st.session_state.optimized_sql)
+        st.session_state.complexity_score = score
+        st.session_state.complexity_label = label
+
 if st.session_state.optimized_sql.strip():
     st.subheader("📌 Identified Issues")
     for issue in st.session_state.issues:
@@ -84,6 +95,9 @@ if st.session_state.optimized_sql.strip():
 
     st.subheader("✅ Optimized Query")
     st.code(st.session_state.optimized_sql, language='sql')
+
+    st.subheader("📊 Query Complexity Score")
+    st.markdown(f"**Score**: {st.session_state.complexity_score} – **{st.session_state.complexity_label}**")
 
     if st.checkbox("🧠 Show Inline AI Review Comments"):
         with st.spinner("Reviewing query line by line..."):
@@ -112,48 +126,18 @@ if st.session_state.optimized_sql.strip():
     st.subheader("🔀 Before vs After Diff")
     st.code(diff_text, language='diff')
 
-    st.markdown("### 🧪 Optional: Test Queries on a SQLite DB")
-    db_file = st.file_uploader("Upload a SQLite `.db` file to test queries", type=["db"])
-
-    if db_file:
-        db_path = "temp_db.db"
-        with open(db_path, "wb") as f:
-            f.write(db_file.getbuffer())
-
-        st.markdown("#### ▶️ Executing Original Query...")
-        result_orig = execute_query(db_path, st.session_state.original_query)
-        if result_orig["success"]:
-            st.success(f"✅ Returned {result_orig['row_count']} rows in {result_orig['execution_time']} sec.")
-            st.write(result_orig["rows"])
-        else:
-            st.error(f"❌ {result_orig['error']}")
-
-        st.markdown("#### ▶️ Executing Optimized Query...")
-        result_opt = execute_query(db_path, st.session_state.optimized_sql)
-        if result_opt["success"]:
-            st.success(f"✅ Returned {result_opt['row_count']} rows in {result_opt['execution_time']} sec.")
-            st.write(result_opt["rows"])
-        else:
-            st.error(f"❌ {result_opt['error']}")
-
-        if result_orig["success"] and result_opt["success"]:
-            st.markdown("### 📊 Query Performance Comparison")
-
-            perf_data = {
-                "Query": ["Original", "Optimized"],
-                "Execution Time (s)": [result_orig["execution_time"], result_opt["execution_time"]],
-                "Row Count": [result_orig["row_count"], result_opt["row_count"]],
-            }
-
-            df_perf = pd.DataFrame(perf_data)
-
-            fig_time = px.bar(df_perf, x="Query", y="Execution Time (s)", color="Query", text_auto=True,
-                              title="⏱️ Execution Time Comparison")
-            st.plotly_chart(fig_time, use_container_width=True)
-
-            fig_rows = px.bar(df_perf, x="Query", y="Row Count", color="Query", text_auto=True,
-                              title="📦 Row Count Comparison")
-            st.plotly_chart(fig_rows, use_container_width=True)
+# 💬 Chat Assistant Panel
+with st.sidebar:
+    st.markdown("## 💬 Ask OptiQuery Assistant")
+    user_question = st.chat_input("Ask about the query...")
+    if user_question and st.session_state.optimized_sql.strip():
+        with st.spinner("Getting AI response..."):
+            chat_prompt = f"You are a SQL expert. Based on the following query, answer this: {user_question}\n\nSQL Query:\n{st.session_state.optimized_sql}"
+            response = openai.ChatCompletion.create(
+                model="gpt-3.5-turbo",
+                messages=[{"role": "user", "content": chat_prompt}]
+            )
+            st.markdown(f"**Answer:** {response.choices[0].message.content.strip()}")
 
 st.markdown("---")
 st.markdown("📦 [View Source Code on GitHub](https://github.com/yourusername/optiquery)")
