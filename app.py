@@ -39,6 +39,49 @@ if "complexity_score" not in st.session_state:
 if "complexity_label" not in st.session_state:
     st.session_state.complexity_label = ""
 
+def explain_sql_with_plan(query):
+    """Run EXPLAIN command on the query to get the execution plan."""
+    explain_query = f"EXPLAIN {query}"
+    explain_output = execute_query(db_path, explain_query)  # You would need to execute the query in the DB
+
+    if explain_output["success"]:
+        return explain_output["rows"]  # Return the execution plan rows
+    else:
+        return f"Error: {explain_output['error']}"
+
+
+def parse_explain_plan(explain_output):
+    """Parse the EXPLAIN plan output to DataFrame"""
+    data = []
+    for line in explain_output:
+        # Assuming tab-delimited output; adjust this if the delimiter is different
+        data.append(line.split("\t"))
+
+    df = pd.DataFrame(data, columns=['ID', 'Select Type', 'Table', 'Type', 'Possible Keys', 'Key', 'Key Length', 'Ref', 'Rows', 'Extra'])
+    return df
+
+def suggest_based_on_explain_plan(explain_plan_df):
+    suggestions = []
+    
+    # Check for full table scans (type 'ALL') in the EXPLAIN plan
+    if "ALL" in explain_plan_df['Type'].values:
+        suggestions.append("Consider adding an index on frequently queried columns to avoid full table scans.")
+    
+    # Check for inefficient join types (e.g., nested loop joins)
+    if "NESTED LOOP" in explain_plan_df['Extra'].values:
+        suggestions.append("Consider changing the join type or adding an index to improve performance.")
+    
+    # Check if there are too many rows being scanned, indicating possible performance issues
+    high_row_count = explain_plan_df['Rows'].astype(int).max()
+    if high_row_count > 10000:  # This is a threshold, can be adjusted
+        suggestions.append("The query might scan too many rows. Consider optimizing the WHERE clause or adding filters.")
+    
+    # If there are 'Using temporary' or 'Using filesort' in 'Extra', suggest index optimization
+    if "Using temporary" in explain_plan_df['Extra'].values or "Using filesort" in explain_plan_df['Extra'].values:
+        suggestions.append("Consider optimizing the query to avoid using temporary tables or filesort. Indexing could help.")
+    
+    return suggestions
+
 def convert_markdown_to_pdf(md_content: str) -> bytes:
     """Converts markdown content to a PDF byte object using ReportLab."""
     buffer = io.BytesIO()
@@ -184,6 +227,33 @@ if st.session_state.optimized_sql.strip():
     diff_text = generate_diff(st.session_state.original_query, st.session_state.optimized_sql)
     st.subheader("🔀 Before vs After Diff")
     st.code(diff_text, language='diff')
+
+    explain_plan = explain_sql_with_plan(st.session_state.optimized_sql)
+    explain_plan_df = parse_explain_plan(explain_plan)
+    st.dataframe(explain_plan_df)  # Show EXPLAIN plan
+
+    suggestions = suggest_based_on_explain_plan(explain_plan_df)
+    if suggestions:
+        st.subheader("🔧 Suggested Optimizations")
+        for suggestion in suggestions:
+            st.markdown(f"- {suggestion}")
+
+    # Show Performance Comparison
+    if st.button("📊 Compare Performance"):
+        result_orig = execute_query(db_path, st.session_state.original_query)
+        result_opt = execute_query(db_path, st.session_state.optimized_sql)
+
+        if result_orig["success"] and result_opt["success"]:
+            perf_data = {
+                "Query": ["Original", "Optimized"],
+                "Execution Time (s)": [result_orig["execution_time"], result_opt["execution_time"]],
+                "Row Count": [result_orig["row_count"], result_opt["row_count"]],
+            }
+            df_perf = pd.DataFrame(perf_data)
+            fig_time = px.bar(df_perf, x="Query", y="Execution Time (s)", color="Query", title="⏱️ Execution Time Comparison")
+            st.plotly_chart(fig_time)
+            fig_rows = px.bar(df_perf, x="Query", y="Row Count", color="Query", title="📦 Row Count Comparison")
+            st.plotly_chart(fig_rows)
 
 # 💬 Chat Assistant Panel
 with st.sidebar:
