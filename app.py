@@ -16,6 +16,7 @@ import openai
 from openai import OpenAI
 import markdown2
 import pdfkit
+import weasyprint
 
 load_dotenv()
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
@@ -39,9 +40,10 @@ if "complexity_label" not in st.session_state:
     st.session_state.complexity_label = ""
 
 def convert_markdown_to_pdf(md_content: str) -> bytes:
-    """Converts markdown content to a PDF byte object."""
+    """Converts markdown content to a PDF byte object using WeasyPrint."""
     html_content = markdown2.markdown(md_content)
-    return pdfkit.from_string(html_content, False)
+    pdf_bytes = weasyprint.HTML(string=html_content).write_pdf()
+    return pdf_bytes
 
 def nl_to_sql(natural_language: str):
     """Converts natural language to SQL using GPT"""
@@ -157,7 +159,7 @@ if st.session_state.optimized_sql.strip():
         mime="text/markdown"
     )
 
-    # NEW: Add PDF download
+    # Add PDF download button
     if st.button("📄 Download PDF Report"):
         with st.spinner("Generating PDF..."):
             pdf_bytes = convert_markdown_to_pdf(report_md)
