@@ -36,6 +36,32 @@ if "complexity_score" not in st.session_state:
 if "complexity_label" not in st.session_state:
     st.session_state.complexity_label = ""
 
+def nl_to_sql(natural_language: str):
+    """Converts natural language to SQL using GPT"""
+    chat_prompt = f"Convert this natural language query into a SQL query:\n\n{natural_language}"
+
+    response = openai.ChatCompletion.create(
+        model="gpt-3.5-turbo",
+        messages=[{"role": "user", "content": chat_prompt}]
+    )
+    
+    return response.choices[0].message.content.strip()
+
+# Add a section in Streamlit for Natural Language Input
+st.markdown("### 🧠 Convert Natural Language to SQL Query")
+
+nl_query = st.text_area("Enter your query in natural language here:", height=150)
+
+if st.button("🔍 Convert to SQL"):
+    if nl_query.strip():
+        with st.spinner("Generating SQL..."):
+            sql_query = nl_to_sql(nl_query)
+        st.subheader("✅ Generated SQL Query:")
+        st.code(sql_query, language="sql")
+    else:
+        st.warning("Please enter a valid natural language query.")
+
+
 st.markdown("### 📋 Upload a `.sql` file or paste your SQL query below")
 uploaded_file = st.file_uploader("Upload SQL File", type=["sql"])
 query = ""
