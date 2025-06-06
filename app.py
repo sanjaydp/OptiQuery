@@ -9,6 +9,9 @@ from optimizer.line_commenter import add_inline_comments
 from optimizer.cost_estimator import estimate_query_cost
 from optimizer.auto_fixer import apply_auto_fixes  # You must have this module
 import os
+import plotly.express as px
+import pandas as pd
+
 
 # Load env
 load_dotenv()
@@ -142,6 +145,27 @@ if st.session_state.optimized_sql.strip():
             st.write(result_opt["rows"])
         else:
             st.error(f"❌ {result_opt['error']}")
+
+        # 📊 Performance Comparison Chart
+        if result_orig["success"] and result_opt["success"]:
+            st.markdown("### 📊 Query Performance Comparison")
+
+            perf_data = {
+                "Query": ["Original", "Optimized"],
+                "Execution Time (s)": [result_orig["execution_time"], result_opt["execution_time"]],
+                "Row Count": [result_orig["row_count"], result_opt["row_count"]],
+            }
+
+            df_perf = pd.DataFrame(perf_data)
+
+            fig_time = px.bar(df_perf, x="Query", y="Execution Time (s)", color="Query", text_auto=True,
+                              title="⏱️ Execution Time Comparison")
+            st.plotly_chart(fig_time, use_container_width=True)
+
+            fig_rows = px.bar(df_perf, x="Query", y="Row Count", color="Query", text_auto=True,
+                              title="📦 Row Count Comparison")
+            st.plotly_chart(fig_rows, use_container_width=True)
+
 
 # Footer
 st.markdown("---")
