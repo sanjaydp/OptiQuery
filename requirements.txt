@@ -4,3 +4,5 @@ python-dotenv
 sqlparse
 altair>=4.2.2
 plotly>=5.20.0
+pdfkit 
+markdown2
