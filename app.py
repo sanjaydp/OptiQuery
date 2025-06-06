@@ -174,12 +174,9 @@ if st.session_state.optimized_sql.strip():
     )
 
     # Add PDF download button
-    if st.button("📄 Download PDF Report"):
-        with st.spinner("Generating PDF..."):
-            pdf_bytes = convert_markdown_to_pdf(report_md)
-        st.download_button(
+    st.download_button(
             label="📄 Download PDF Report",
-            data=pdf_bytes,
+            data=convert_markdown_to_pdf(report_md),
             file_name="optiquery_report.pdf",
             mime="application/pdf"
         )
