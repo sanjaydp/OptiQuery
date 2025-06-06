@@ -40,10 +40,10 @@ def nl_to_sql(natural_language: str):
     """Converts natural language to SQL using GPT"""
     chat_prompt = f"Convert this natural language query into a SQL query:\n\n{natural_language}"
 
-    response = openai.ChatCompletion.create(
-        model="gpt-3.5-turbo",
-        messages=[{"role": "user", "content": chat_prompt}]
-    )
+    response = client.chat.completions.create(
+                model="gpt-3.5-turbo",
+                messages=[{"role": "user", "content": chat_prompt}]
+            )
     
     return response.choices[0].message.content.strip()
 
