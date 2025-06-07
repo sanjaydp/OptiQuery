@@ -1,22 +1,27 @@
 import sqlite3  # or your preferred database module
 
 def execute_query(db_path, query):
-    """Execute the SQL query and return the results."""
-    conn = None  # Initialize conn variable
+    conn = None  # ✅ Ensure it's defined before try block
     try:
-        # Establish connection to the database
         conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
-        
-        # Execute the query
+
+        start_time = time.time()
         cursor.execute(query)
         rows = cursor.fetchall()
-        
-        return {"success": True, "rows": rows, "row_count": len(rows), "execution_time": 1.23}  # Simulated execution time
-        
+        execution_time = time.time() - start_time
+
+        return {
+            "success": True,
+            "rows": rows,
+            "row_count": len(rows),
+            "execution_time": round(execution_time, 4)
+        }
     except Exception as e:
-        return {"success": False, "error": str(e)}
-    
+        return {
+            "success": False,
+            "error": str(e)
+        }
     finally:
         if conn:
-            conn.close()  # Ensure connection is closed after query execution
+            conn.close()

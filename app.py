@@ -156,12 +156,20 @@ if st.button("🔍 Convert to SQL"):
         st.warning("Please enter a valid natural language query.")
 
 
-st.markdown("### 📋 Upload a `.sql` file or paste your SQL query below")
-uploaded_file = st.file_uploader("Upload SQL File", type=["sql"])
+st.markdown("### 📋 Upload a `.sql` file or .db file or paste your SQL query below")
+uploaded_file = st.file_uploader("Upload SQL or SQLite DB File", type=["sql", "db"])
+
 query = ""
 
-if uploaded_file:
+# Check if a sql file is uploaded
+if uploaded_file and uploaded_file.name.endswith(".sql"):
     query = uploaded_file.read().decode("utf-8")
+# Check if a database file is uploaded
+elif uploaded_file and uploaded_file.name.endswith(".db"):
+    db_path = f"/tmp/{uploaded_file.name}"
+    with open(db_path, "wb") as f:
+        f.write(uploaded_file.read())
+    st.success(f"Uploaded and saved database to: {db_path}")
 else:
     query = st.text_area("Paste your SQL query here", height=200)
 
