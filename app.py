@@ -53,12 +53,24 @@ def explain_sql_with_plan(query):
 def parse_explain_plan(explain_output):
     """Parse the EXPLAIN plan output to DataFrame"""
     data = []
+    
     for line in explain_output:
-        # Assuming tab-delimited output; adjust this if the delimiter is different
-        data.append(line.split("\t"))
+        # Split each line by a tab, but first check if it has enough columns
+        split_line = line.split("\t")
+        if len(split_line) == 10:
+            data.append(split_line)
+        else:
+            # If the data doesn't match the expected number of columns, print the line
+            print(f"Skipping line: {line} because it doesn't have 10 columns")
+    
+    # Now, only create the dataframe if there is valid data
+    if data:
+        df = pd.DataFrame(data, columns=['ID', 'Select Type', 'Table', 'Type', 'Possible Keys', 'Key', 'Key Length', 'Ref', 'Rows', 'Extra'])
+        return df
+    else:
+        print("No valid data found in EXPLAIN output.")
+        return pd.DataFrame()  # Return an empty dataframe if no valid data was found
 
-    df = pd.DataFrame(data, columns=['ID', 'Select Type', 'Table', 'Type', 'Possible Keys', 'Key', 'Key Length', 'Ref', 'Rows', 'Extra'])
-    return df
 
 def suggest_based_on_explain_plan(explain_plan_df):
     suggestions = []
