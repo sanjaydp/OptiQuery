@@ -51,31 +51,44 @@ def explain_sql_with_plan(query):
 
 
 def parse_explain_plan(explain_output):
-    """Parse the EXPLAIN plan output to DataFrame"""
+    """Parse the EXPLAIN plan output to DataFrame."""
     data = []
     
     for line in explain_output:
-        # Split each line by a tab, but first check if it has enough columns
+        print(f"Parsing line: {line}")  # Debugging: check the line structure
+        # Adjust delimiter if needed, this assumes tab-delimited format
         split_line = line.split("\t")
-        if len(split_line) == 10:
+        if len(split_line) == 10:  # Assuming you expect 10 columns
             data.append(split_line)
         else:
-            # If the data doesn't match the expected number of columns, print the line
-            print(f"Skipping line: {line} because it doesn't have 10 columns")
+            print(f"Skipping line due to unexpected column count: {line}")
     
-    # Now, only create the dataframe if there is valid data
+    # Check if data has valid rows before creating DataFrame
     if data:
-        df = pd.DataFrame(data, columns=['ID', 'Select Type', 'Table', 'Type', 'Possible Keys', 'Key', 'Key Length', 'Ref', 'Rows', 'Extra'])
-        return df
+        try:
+            df = pd.DataFrame(data, columns=['ID', 'Select Type', 'Table', 'Type', 'Possible Keys', 'Key', 'Key Length', 'Ref', 'Rows', 'Extra'])
+            return df
+        except ValueError as e:
+            print(f"Error creating DataFrame: {e}")
+            return pd.DataFrame()  # Return empty DataFrame if columns don't match
     else:
         print("No valid data found in EXPLAIN output.")
-        return pd.DataFrame()  # Return an empty dataframe if no valid data was found
-
+        return pd.DataFrame()  # Return empty DataFrame if no valid data
 
 def suggest_based_on_explain_plan(explain_plan_df):
+    """Suggest optimizations based on the EXPLAIN plan."""
+    if explain_plan_df.empty:
+        print("No valid EXPLAIN data to suggest optimizations.")
+        return []
+
     suggestions = []
     
-    # Check for full table scans (type 'ALL') in the EXPLAIN plan
+    # Ensure the 'Type' column exists before proceeding
+    if 'Type' not in explain_plan_df.columns:
+        print("'Type' column missing in EXPLAIN plan DataFrame.")
+        return []
+
+    # Check for full table scans (type 'ALL')
     if "ALL" in explain_plan_df['Type'].values:
         suggestions.append("Consider adding an index on frequently queried columns to avoid full table scans.")
     
@@ -93,6 +106,9 @@ def suggest_based_on_explain_plan(explain_plan_df):
         suggestions.append("Consider optimizing the query to avoid using temporary tables or filesort. Indexing could help.")
     
     return suggestions
+
+# Use this revised parse_explain_plan and suggest_based_on_explain_plan functions in your main app
+
 
 def convert_markdown_to_pdf(md_content: str) -> bytes:
     """Converts markdown content to a PDF byte object using ReportLab."""
