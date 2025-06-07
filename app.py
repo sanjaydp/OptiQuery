@@ -24,7 +24,6 @@ client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 st.set_page_config(page_title="OptiQuery – AI SQL Assistant", page_icon="🧠", layout="wide")
 st.markdown("<h1 style='color:#4B8BBE;'>🧠 OptiQuery: SQL Optimizer Assistant</h1>", unsafe_allow_html=True)
-db_path = None
 
 if "optimized_sql" not in st.session_state:
     st.session_state.optimized_sql = ""
@@ -160,18 +159,28 @@ st.markdown("### 📋 Upload a `.sql` file or .db file or paste your SQL query b
 uploaded_file = st.file_uploader("Upload SQL or SQLite DB File", type=["sql", "db"])
 
 query = ""
+db_path = None  # Declare explicitly
 
-# Check if a sql file is uploaded
+# Case 1: SQL file uploaded – read its content directly
 if uploaded_file and uploaded_file.name.endswith(".sql"):
     query = uploaded_file.read().decode("utf-8")
-# Check if a database file is uploaded
+    st.info("✅ SQL file detected. The query from the file will be used.")
+    db_path = None  # Make sure not to use a DB
+
+# Case 2: DB file uploaded – save and ask for query input
 elif uploaded_file and uploaded_file.name.endswith(".db"):
     db_path = f"/tmp/{uploaded_file.name}"
     with open(db_path, "wb") as f:
         f.write(uploaded_file.read())
-    st.success(f"Uploaded and saved database to: {db_path}")
-else:
-    query = st.text_area("Paste your SQL query here", height=200)
+    st.success(f"✅ Uploaded and saved database to: {db_path}")
+
+    # Now allow the user to paste query
+    query = st.text_area("Enter SQL query to run on uploaded database:", height=200)
+
+# Case 3: No file uploaded – let user paste the query manually
+elif not uploaded_file:
+    query = st.text_area("Paste your SQL query here:", height=200)
+
 
 fix_mode = st.radio("Choose optimization mode:", ["🪄 Auto-Fix First", "🤖 GPT Only"])
 
@@ -306,4 +315,4 @@ with st.sidebar:
             st.markdown(f"**Answer:** {response.choices[0].message.content.strip()}")
 
 st.markdown("---")
-st.markdown("📦 [View Source Code on GitHub](https://github.com/yourusername/optiquery)")
+st.markdown("📦 [View Source Code on GitHub](https://github.com/sanjaydp/optiquery)")
