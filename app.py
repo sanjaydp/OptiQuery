@@ -1,7 +1,7 @@
 import streamlit as st
 from dotenv import load_dotenv
 from optimizer.sql_parser import analyze_sql
-from optimizer.llm_optimizer import optimize_query, explain_optimization
+from optimizer.llm_optimizer import optimize_query, explain_optimization, format_sql_query
 from optimizer.report_generator import generate_report
 from optimizer.diff_viewer import generate_diff
 from optimizer.query_executor import execute_query
@@ -582,28 +582,30 @@ def run_analysis(query, analysis_options, db_path):
                                 st.info(analysis["resource_usage"])
                     
                     # Display optimized query with syntax highlighting
-                    st.markdown("**Optimized Query:**")
+                    st.markdown("#### 🔄 Optimized Query")
                     
-                    # Add copy button for the query
-                    col1, col2 = st.columns([0.9, 0.1])
-                    with col1:
-                        st.code(optimization_result["optimized_query"], language="sql")
-                    with col2:
-                        if st.button("📋", help="Copy query to clipboard"):
-                            st.session_state.clipboard = optimization_result["optimized_query"]
-                            st.success("Query copied!")
+                    # Format query for display
+                    formatted_query = format_sql_query(optimization_result["optimized_query"])
                     
-                    # Show optimization details in an expander
+                    # Create columns for query and copy button
+                    query_col, button_col = st.columns([0.95, 0.05])
+                    with query_col:
+                        st.code(formatted_query, language="sql")
+                    with button_col:
+                        create_copy_button(formatted_query)
+                    
+                    # Show optimization details
                     with st.expander("📊 Optimization Details", expanded=True):
-                        # Show optimization reasoning
-                        st.markdown("**Changes and Reasoning:**")
-                        st.info(optimization_result["optimization_reasoning"])
-                        
                         # Show changes made with impact analysis
                         if optimization_result.get("changes_made"):
                             st.markdown("**Changes Made:**")
                             for change in optimization_result["changes_made"]:
                                 st.markdown(f"• {change}")
+                        
+                        # Show optimization reasoning
+                        if optimization_result.get("optimization_reasoning"):
+                            st.markdown("**Optimization Reasoning:**")
+                            st.info(optimization_result["optimization_reasoning"])
                         
                         # Show validation steps
                         if optimization_result.get("validation_steps"):
@@ -616,36 +618,47 @@ def run_analysis(query, analysis_options, db_path):
                     
                     with col1:
                         # Show estimated improvement
-                        improvement = optimization_result["estimated_improvement"]
+                        improvement = optimization_result.get("estimated_improvement", "0%")
                         if isinstance(improvement, str) and "%" in improvement:
+                            value = improvement
+                            delta_color = "normal"
+                            if "-" in improvement:
+                                delta_color = "inverse"
                             st.metric(
-                                label="Estimated Performance Improvement",
+                                label="Estimated Improvement",
                                 value=improvement,
-                                help="Conservative estimate based on analysis"
+                                delta_color=delta_color,
+                                help="Estimated performance improvement"
                             )
                     
                     with col2:
-                        # Show confidence level with explanation
-                        confidence = optimization_result["confidence"]
+                        # Show confidence level with color indicator
+                        confidence = optimization_result.get("confidence", "low")
                         confidence_color = {
                             "high": "🟢",
                             "medium": "🟡",
                             "low": "🔴"
                         }.get(confidence.lower(), "⚪")
                         st.metric(
-                            label="Optimization Confidence",
+                            label="Confidence Level",
                             value=f"{confidence_color} {confidence.title()}",
-                            help="Confidence in the optimization impact"
+                            help="Confidence in optimization effectiveness"
                         )
                     
                     with col3:
-                        # Show number of suggested indexes
-                        index_count = len(optimization_result.get("index_suggestions", []))
-                        st.metric(
-                            label="Suggested Indexes",
-                            value=index_count,
-                            help="Number of recommended index changes"
-                        )
+                        # Show optimization status
+                        if has_error:
+                            st.metric(
+                                label="Status",
+                                value="⚠️ Issues Found",
+                                help="Optimization encountered problems"
+                            )
+                        else:
+                            st.metric(
+                                label="Status",
+                                value="✅ Success",
+                                help="Optimization completed successfully"
+                            )
                     
                     # Show warnings if any
                     if optimization_result.get("warnings"):
@@ -653,17 +666,18 @@ def run_analysis(query, analysis_options, db_path):
                         for warning in optimization_result["warnings"]:
                             st.warning(warning)
                     
-                    # Show index suggestions with justification
+                    # Show index suggestions
                     if optimization_result.get("index_suggestions"):
-                        with st.expander("📈 Recommended Indexes", expanded=True):
+                        with st.expander("📈 Index Recommendations", expanded=False):
+                            st.markdown("The following indexes may improve query performance:")
                             for suggestion in optimization_result["index_suggestions"]:
-                                st.code(suggestion, language="sql")
+                                st.code(format_sql_for_display(suggestion), language="sql")
                                     
                 except Exception as e:
                     st.error("❌ An error occurred during optimization:")
                     st.error(str(e))
-                    st.info("Showing original query with basic formatting:")
-                    st.code(query, language="sql")
+                    st.info("Original query with basic formatting:")
+                    st.code(format_sql_for_display(query), language="sql")
             
             progress_bar.progress(90)
             
@@ -845,6 +859,16 @@ Expected Improvements:
 {json.dumps(analysis_results['optimization_plan']['estimated_improvement'], indent=2)}
 """
     return report
+
+def format_sql_for_display(query: str) -> str:
+    """Format SQL query for display with proper syntax highlighting."""
+    return format_sql_query(query)
+
+def create_copy_button(text: str, button_text: str = "📋", help_text: str = "Copy to clipboard") -> None:
+    """Create a copy button for text content."""
+    if st.button(button_text, help=help_text):
+        st.session_state.clipboard = text
+        st.success("Copied!")
 
 # Custom CSS for better UI
 st.markdown("""

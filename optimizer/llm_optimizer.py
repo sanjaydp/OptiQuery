@@ -164,7 +164,10 @@ def clean_sql_query(query: str) -> str:
     # Ensure single space after commas
     query = re.sub(r',\s*', ', ', query)
     
-    return query.strip()
+    # Remove any trailing semicolon for consistency
+    query = query.rstrip(';').strip()
+    
+    return query
 
 def extract_sql_from_text(text: str) -> str:
     """Extract a SQL query from text content."""
@@ -204,39 +207,80 @@ def create_fallback_response(query: str, error_message: str) -> dict:
     }
 
 def format_sql_query(query: str) -> str:
-    """Format a SQL query with proper capitalization and indentation."""
+    """Format a SQL query with proper capitalization, indentation and spacing."""
     # List of SQL keywords to capitalize
     keywords = [
-        "SELECT", "FROM", "WHERE", "JOIN", "LEFT", "RIGHT", "INNER", "OUTER",
-        "ON", "AND", "OR", "IN", "NOT", "EXISTS", "GROUP BY", "HAVING",
-        "ORDER BY", "LIMIT", "OFFSET", "UNION", "ALL", "DESC", "ASC"
+        'SELECT', 'FROM', 'WHERE', 'JOIN', 'INNER JOIN', 'LEFT JOIN', 'RIGHT JOIN', 'OUTER JOIN',
+        'ON', 'AND', 'OR', 'IN', 'NOT IN', 'EXISTS', 'NOT EXISTS', 'GROUP BY', 'HAVING',
+        'ORDER BY', 'LIMIT', 'OFFSET', 'UNION', 'UNION ALL', 'INSERT INTO', 'VALUES',
+        'UPDATE', 'SET', 'DELETE FROM', 'CREATE', 'ALTER', 'DROP', 'TRUNCATE', 'AS',
+        'ASC', 'DESC', 'DISTINCT', 'CASE', 'WHEN', 'THEN', 'ELSE', 'END', 'WITH'
     ]
     
+    # Clean up extra whitespace first
+    query = ' '.join(query.split())
+    
     # Capitalize keywords
-    formatted = query.strip()
-    for keyword in keywords:
-        pattern = r'\b' + re.escape(keyword) + r'\b'
-        formatted = re.sub(pattern, keyword, formatted, flags=re.IGNORECASE)
+    # Sort keywords by length in reverse order to handle compound keywords correctly
+    for keyword in sorted(keywords, key=len, reverse=True):
+        pattern = r'(?i)\b' + re.escape(keyword) + r'\b'
+        query = re.sub(pattern, keyword, query)
     
     # Add newlines before major clauses
-    major_keywords = ["SELECT", "FROM", "WHERE", "GROUP BY", "HAVING", "ORDER BY", "LIMIT"]
-    for keyword in major_keywords:
-        pattern = r'\b' + re.escape(keyword) + r'\b'
-        formatted = re.sub(pattern, f"\n{keyword}", formatted)
+    major_clauses = [
+        'SELECT', 'FROM', 'WHERE', 'GROUP BY', 'HAVING', 'ORDER BY',
+        'LIMIT', 'UNION', 'INSERT', 'UPDATE', 'DELETE'
+    ]
+    for clause in major_clauses:
+        query = re.sub(r'\s+' + clause + r'\b', '\n' + clause, query)
     
-    # Add indentation
-    lines = formatted.split('\n')
+    # Add newlines and indentation for JOIN clauses
+    join_types = ['JOIN', 'INNER JOIN', 'LEFT JOIN', 'RIGHT JOIN', 'OUTER JOIN']
+    for join in join_types:
+        query = re.sub(r'\s+' + join + r'\b', '\n    ' + join, query)
+    
+    # Add indentation for ON clauses in JOINs
+    query = re.sub(r'\s+ON\s+', '\n        ON ', query)
+    
+    # Add indentation for AND/OR conditions
+    lines = query.split('\n')
     formatted_lines = []
-    base_indent = " " * 4
+    indent_level = 0
     
     for line in lines:
         stripped = line.strip()
-        if any(stripped.startswith(keyword) for keyword in major_keywords):
-            formatted_lines.append(stripped)
-        else:
-            formatted_lines.append(base_indent + stripped)
+        
+        # Determine indentation level
+        if any(stripped.startswith(clause) for clause in major_clauses):
+            indent_level = 0
+        elif any(stripped.startswith(join) for join in join_types):
+            indent_level = 1
+        elif stripped.startswith('ON '):
+            indent_level = 2
+        elif stripped.startswith(('AND ', 'OR ')):
+            if indent_level < 2:
+                indent_level = 2
+        
+        # Apply indentation
+        formatted_lines.append('    ' * indent_level + stripped)
     
-    return '\n'.join(formatted_lines).strip()
+    # Ensure proper spacing around operators
+    query = '\n'.join(formatted_lines)
+    operators = ['=', '<', '>', '<=', '>=', '<>', '!=', '+', '-', '*', '/', '%']
+    for op in operators:
+        query = re.sub(r'\s*' + re.escape(op) + r'\s*', f' {op} ', query)
+    
+    # Clean up spacing around parentheses
+    query = re.sub(r'\(\s+', '(', query)
+    query = re.sub(r'\s+\)', ')', query)
+    
+    # Ensure single space after commas
+    query = re.sub(r',\s*', ', ', query)
+    
+    # Remove extra blank lines
+    query = re.sub(r'\n\s*\n', '\n', query)
+    
+    return query.strip()
 
 def explain_optimization(original_query: str, optimized_query: str) -> str:
     client = get_openai_client()
