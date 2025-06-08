@@ -1043,9 +1043,12 @@ def show_db_connection_form():
             st.session_state.sqlite_path = sqlite_path
             
             if st.button("Initialize Sample Database"):
-                initialize_sqlite_database()
-                st.success("✅ Sample database initialized!")
-                st.session_state.schema_summary = get_schema_summary()
+                with st.spinner("Initializing database..."):
+                    initialize_sqlite_database()
+                    st.session_state.schema_summary = get_schema_summary()
+                    st.session_state.db_initialized = True
+                    st.success("✅ Sample database initialized!")
+                    st.rerun()
                 
         else:
             # PostgreSQL settings
@@ -1086,6 +1089,25 @@ def show_db_connection_form():
             st.session_state.pg_database = pg_database
             st.session_state.pg_user = pg_user
             st.session_state.pg_password = pg_password
+            
+            # Test PostgreSQL connection
+            if st.button("Test Connection"):
+                with st.spinner("Testing connection..."):
+                    connection = get_database_connection()
+                    if connection:
+                        try:
+                            cursor = connection.cursor()
+                            cursor.execute("SELECT version();")
+                            version = cursor.fetchone()[0]
+                            st.success(f"✅ Connected to PostgreSQL {version}")
+                            st.session_state.db_initialized = True
+                            st.session_state.schema_summary = get_schema_summary()
+                            cursor.close()
+                            connection.close()
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"❌ Connection error: {str(e)}")
+                            st.session_state.db_initialized = False
         
         # OpenAI API key for AI-powered suggestions
         st.markdown("### 🤖 AI Settings")
@@ -1098,7 +1120,7 @@ def show_db_connection_form():
         st.session_state.openai_api_key = openai_key
         
         # Show current database schema if available
-        if st.session_state.get('schema_summary'):
+        if st.session_state.get('schema_summary') and st.session_state.db_initialized:
             with st.expander("📚 Database Schema", expanded=False):
                 st.text(st.session_state.schema_summary)
 
@@ -1222,13 +1244,13 @@ def format_time(seconds: float) -> str:
 def main():
     st.title("OptiQuery: SQL Optimizer Assistant")
     
-    # Initialize SQLite database with sample data
-    if st.session_state.get('use_sqlite', True):
-        initialize_sqlite_database()
-        st.session_state.sqlite_path = 'optiquery.db'
-        
-        # Get and store schema summary
-        st.session_state.schema_summary = get_schema_summary()
+    # Initialize database connection state if not exists
+    if 'db_initialized' not in st.session_state:
+        st.session_state.db_initialized = False
+    if 'query_history' not in st.session_state:
+        st.session_state.query_history = []
+    if 'query' not in st.session_state:
+        st.session_state.query = ""
     
     # Show database connection form in sidebar
     show_db_connection_form()
@@ -1260,8 +1282,10 @@ def main():
             except Exception as e:
                 st.error(f"Error reading SQL file: {str(e)}")
     else:
-        # Sample query template
-        sample_query = """SELECT *
+        # Sample query template - only show after database is initialized
+        sample_query = ""
+        if st.session_state.db_initialized:
+            sample_query = """SELECT *
 FROM orders
 WHERE customer_id IN (
     SELECT customer_id 
@@ -1273,7 +1297,7 @@ AND order_total > 1000;"""
         
         query = st.text_area(
             "Enter your SQL query:",
-            value=sample_query if not st.session_state.get('query') else st.session_state.get('query'),
+            value=st.session_state.get('query', sample_query),
             height=200,
             help="Paste your SQL query here for optimization analysis"
         )
@@ -1294,7 +1318,7 @@ AND order_total > 1000;"""
                 help="Analyze query performance and suggest optimizations"
             )
     
-    # Only show optimization button if we have a query
+    # Only show optimization button if we have a query and database is initialized
     if query:
         # Store query in session state
         st.session_state.query = query
@@ -1304,10 +1328,14 @@ AND order_total > 1000;"""
             run_optimization = st.button(
                 "Analyze & Optimize",
                 type="primary",
-                help="Run selected analysis on the query"
+                help="Run selected analysis on the query",
+                disabled=not st.session_state.db_initialized
             )
             
-        if run_optimization:
+        if not st.session_state.db_initialized:
+            st.warning("⚠️ Please initialize or connect to a database first")
+            
+        if run_optimization and st.session_state.db_initialized:
             with st.spinner("Analyzing query..."):
                 analyze_query(query, run_syntax_check, run_performance)
     
