@@ -35,6 +35,7 @@ from datetime import datetime
 import json
 from typing import Dict
 import statistics
+import psycopg2
 
 # Page Configuration must be the first Streamlit command
 st.set_page_config(
@@ -463,124 +464,90 @@ def measure_query_execution(query: str, connection, num_runs: int = 5) -> dict:
             "error": str(e)
         }
 
+def get_database_connection():
+    """Get a database connection with proper error handling."""
+    try:
+        # Get connection parameters from session state or environment
+        db_params = st.session_state.get('db_params', {})
+        if not db_params:
+            st.error("⚠️ Database connection not configured. Please set up your database connection first.")
+            return None
+            
+        # Create connection
+        connection = psycopg2.connect(
+            host=db_params.get('host', 'localhost'),
+            port=db_params.get('port', 5432),
+            database=db_params.get('database'),
+            user=db_params.get('user'),
+            password=db_params.get('password')
+        )
+        
+        return connection
+    except Exception as e:
+        st.error("❌ Database connection error:")
+        st.error(str(e))
+        return None
+
 def run_analysis(query, analysis_options, db_path):
     """Enhanced run_analysis function with enterprise features"""
-    debug_state("Starting Analysis")
     
-    with st.spinner("🔍 Analyzing your query..."):
-        progress_bar = st.progress(0)
+    # Initialize progress
+    progress_bar = st.progress(0)
+    progress_bar.progress(10)
+    
+    try:
+        # Get database connection
+        connection = get_database_connection()
+        if not connection:
+            return
         
-        # Store original query
-        st.session_state.original_query = query
-        
-        try:
-            # Execute original query and store results
-            original_results = execute_query(db_path, query)
-            store_query_results("original", original_results)
-            debug_state("After Original Query")
-            
-            # Run enterprise analysis first
-            enterprise_results = analyze_enterprise_features(query)
-            display_enterprise_analysis(query, enterprise_results)
-            store_analysis_results("enterprise", enterprise_results)
-            progress_bar.progress(30)
-            
-            # Collect table statistics
+        # Ensure connection is closed after use
+        with connection:
+            # Get table statistics if available
             table_stats = {}
             try:
-                conn = sqlite3.connect(db_path)
-                cursor = conn.cursor()
-                cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
-                tables = cursor.fetchall()
-                
-                for (table_name,) in tables:
-                    cursor.execute(f"SELECT COUNT(*) FROM {table_name}")
-                    row_count = cursor.fetchone()[0]
+                with connection.cursor() as cursor:
+                    # Get table row counts
+                    cursor.execute("""
+                        SELECT 
+                            schemaname || '.' || tablename as table_name,
+                            n_live_tup as row_count
+                        FROM pg_stat_user_tables
+                    """)
+                    for table_name, row_count in cursor.fetchall():
+                        table_stats[table_name] = {"row_count": row_count}
                     
-                    # Get column statistics
-                    cursor.execute(f"PRAGMA table_info({table_name})")
-                    columns = cursor.fetchall()
+                    # Get index information
+                    cursor.execute("""
+                        SELECT
+                            schemaname || '.' || tablename as table_name,
+                            indexname,
+                            indexdef
+                        FROM pg_indexes
+                        WHERE schemaname NOT IN ('pg_catalog', 'information_schema')
+                    """)
+                    for table_name, index_name, index_def in cursor.fetchall():
+                        if table_name in table_stats:
+                            if "indexes" not in table_stats[table_name]:
+                                table_stats[table_name]["indexes"] = {}
+                            table_stats[table_name]["indexes"][index_name] = index_def
                     
-                    # Get existing indexes
-                    cursor.execute(f"SELECT name, sql FROM sqlite_master WHERE type='index' AND tbl_name='{table_name}'")
-                    indexes = cursor.fetchall()
-                    
-                    table_stats[table_name] = {
-                        "row_count": row_count,
-                        "columns": [col[1] for col in columns],
-                        "indexes": {idx[0]: idx[1] for idx in indexes}
-                    }
-                conn.close()
+                    # Get column information
+                    cursor.execute("""
+                        SELECT 
+                            table_schema || '.' || table_name as table_name,
+                            string_agg(column_name, ', ' ORDER BY ordinal_position) as columns
+                        FROM information_schema.columns
+                        WHERE table_schema NOT IN ('pg_catalog', 'information_schema')
+                        GROUP BY table_schema, table_name
+                    """)
+                    for table_name, columns in cursor.fetchall():
+                        if table_name in table_stats:
+                            table_stats[table_name]["columns"] = columns.split(", ")
             except Exception as e:
-                st.error(f"Error collecting table statistics: {str(e)}")
-                return
+                st.warning(f"⚠️ Could not fetch complete table statistics: {str(e)}")
             
-            progress_bar.progress(50)
-            
-            # Run selected analysis options
-            if "Syntax Check" in analysis_options:
-                st.markdown("#### 📝 Query Analysis")
-                analysis_result = analyze_sql(query)
-                store_analysis_results("syntax", analysis_result)
-                
-                # Display issues
-                issues = analysis_result.get("issues", [])
-                suggestions = analysis_result.get("suggestions", [])
-                complexity = analysis_result.get("complexity", {})
-                
-                if issues:
-                    st.markdown("**⚠️ Potential Issues:**")
-                    for issue in issues:
-                        st.warning(issue)
-                else:
-                    st.success("✅ No major issues found")
-                
-                # Display suggestions
-                if suggestions:
-                    st.markdown("**💡 Optimization Suggestions:**")
-                    for suggestion in suggestions:
-                        st.info(suggestion)
-                
-                # Display complexity analysis
-                if complexity:
-                    st.markdown("**🔍 Query Complexity Analysis:**")
-                    st.session_state.complexity_score = complexity.get('score', 0)
-                    st.session_state.complexity_label = complexity.get('level', 'N/A')
-                    
-                    # Create three columns for metrics
-                    col1, col2, col3 = st.columns(3)
-                    
-                    with col1:
-                        st.metric(
-                            "Complexity Score",
-                            f"{complexity.get('score', 0)}/100",
-                            delta=None,
-                            delta_color="inverse"
-                        )
-                    
-                    with col2:
-                        st.metric(
-                            "Complexity Level",
-                            complexity.get('level', 'N/A'),
-                            delta=None
-                        )
-                    
-                    # Display complexity factors
-                    if 'factors' in complexity:
-                        st.markdown("**Complexity Factors:**")
-                        factors = complexity['factors']
-                        factor_df = pd.DataFrame({
-                            'Factor': ['Joins', 'Where Conditions', 'Subqueries', 'Function Calls'],
-                            'Count': [
-                                factors.get('joins', 0),
-                                factors.get('conditions', 0),
-                                factors.get('subqueries', 0),
-                                factors.get('functions', 0)
-                            ]
-                        })
-                        st.dataframe(factor_df, hide_index=True)
-            
-            progress_bar.progress(70)
+            progress_bar.progress(30)
             
             # Performance Analysis & Optimization
             if "Performance Analysis" in analysis_options:
@@ -698,7 +665,7 @@ def run_analysis(query, analysis_options, db_path):
                             st.markdown("The following indexes may improve query performance:")
                             for suggestion in optimization_result["index_suggestions"]:
                                 st.code(format_sql_for_display(suggestion), language="sql")
-                                    
+                                
                 except Exception as e:
                     st.error("❌ An error occurred during optimization:")
                     st.error(str(e))
@@ -707,121 +674,17 @@ def run_analysis(query, analysis_options, db_path):
             
             progress_bar.progress(90)
             
-            # Index Recommendations
-            if "Index Recommendations" in analysis_options:
-                st.markdown("#### 📊 Index Analysis")
-                
-                try:
-                    # Get existing indexes
-                    existing_indexes = {}
-                    for table, stats in table_stats.items():
-                        if "indexes" in stats:
-                            existing_indexes[table] = stats["indexes"]
-                    
-                    st.markdown("**Current Indexes:**")
-                    if existing_indexes:
-                        for table, indexes in existing_indexes.items():
-                            st.markdown(f"*Table: {table}*")
-                            for idx_name, idx_sql in indexes.items():
-                                st.code(idx_sql, language="sql")
-                    else:
-                        st.info("No existing indexes found")
-                    
-                    # Analyze query for potential indexes
-                    st.markdown("**Recommended Indexes:**")
-                    with st.spinner("Analyzing for index recommendations..."):
-                        # Extract tables and columns from the query
-                        tables_in_query = re.findall(r"FROM\s+(\w+)|JOIN\s+(\w+)", query, re.IGNORECASE)
-                        tables_in_query = [t[0] or t[1] for t in tables_in_query if t[0] or t[1]]
-                        
-                        # Extract WHERE conditions
-                        where_conditions = re.findall(r"WHERE\s+(\w+\.\w+|\w+)\s*[=<>]", query, re.IGNORECASE)
-                        
-                        # Extract JOIN conditions
-                        join_conditions = re.findall(r"ON\s+(\w+\.\w+)\s*=\s*(\w+\.\w+)", query, re.IGNORECASE)
-                        
-                        recommended_indexes = []
-                        
-                        # Recommend indexes for WHERE conditions
-                        for cond in where_conditions:
-                            if "." in cond:
-                                table, column = cond.split(".")
-                                if table in tables_in_query:
-                                    recommended_indexes.append(f"CREATE INDEX idx_{table}_{column} ON {table}({column});")
-                        
-                        # Recommend indexes for JOIN conditions
-                        for left, right in join_conditions:
-                            left_table, left_col = left.split(".")
-                            right_table, right_col = right.split(".")
-                            if left_table in tables_in_query:
-                                recommended_indexes.append(f"CREATE INDEX idx_{left_table}_{left_col} ON {left_table}({left_col});")
-                            if right_table in tables_in_query:
-                                recommended_indexes.append(f"CREATE INDEX idx_{right_table}_{right_col} ON {right_table}({right_col});")
-                        
-                        if recommended_indexes:
-                            for idx in recommended_indexes:
-                                st.code(idx, language="sql")
-                        else:
-                            st.info("No additional indexes recommended")
-                except Exception as e:
-                    st.error(f"Error analyzing indexes: {str(e)}")
-            
-            # Query Plan
-            if "Query Plan" in analysis_options:
-                st.markdown("#### 📈 Query Execution Plan")
-                
-                try:
-                    with st.spinner("Analyzing query execution plan..."):
-                        # Execute EXPLAIN QUERY PLAN
-                        conn = sqlite3.connect(db_path)
-                        cursor = conn.cursor()
-                        cursor.execute(f"EXPLAIN QUERY PLAN {query}")
-                        plan_rows = cursor.fetchall()
-                        conn.close()
-                        
-                        if plan_rows:
-                            # Create a DataFrame for the execution plan
-                            plan_df = pd.DataFrame(plan_rows, columns=['id', 'parent', 'notused', 'detail'])
-                            st.dataframe(plan_df, hide_index=True)
-                            
-                            # Add explanation of the query plan
-                            st.markdown("**Plan Analysis:**")
-                            
-                            # Look for full table scans
-                            full_scans = [row for row in plan_rows if 'SCAN TABLE' in row[3] and 'SEARCH TABLE' not in row[3]]
-                            if full_scans:
-                                st.warning("⚠️ Query contains full table scan(s):")
-                                for scan in full_scans:
-                                    st.markdown(f"- {scan[3]}")
-                            
-                            # Look for index usage
-                            index_usage = [row for row in plan_rows if 'SEARCH' in row[3] or 'INDEX' in row[3]]
-                            if index_usage:
-                                st.success("✅ Query uses indexes:")
-                                for idx in index_usage:
-                                    st.markdown(f"- {idx[3]}")
-                        else:
-                            st.warning("No execution plan available for this query")
-                except Exception as e:
-                    st.error(f"Error analyzing query plan: {str(e)}")
-            
+            # Generate final report
+            report = generate_report(query, analysis_options)
             progress_bar.progress(100)
-            st.success("✅ Analysis Complete!")
             
-            # After optimization, execute optimized query if available
-            if st.session_state.optimized_sql:
-                optimized_results = execute_query(db_path, st.session_state.optimized_sql)
-                store_query_results("optimized", optimized_results)
-                debug_state("After Optimized Query")
+            return report
             
-            # Display results
-            display_query_results()
-            
-        except Exception as e:
-            st.error(f"Error during analysis: {str(e)}")
-            if st.session_state.debug:
-                st.exception(e)
-            return
+    except Exception as e:
+        st.error("❌ An error occurred during analysis:")
+        st.error(str(e))
+        progress_bar.progress(100)
+        return None
 
 def generate_comprehensive_report(query: str, analysis_results: Dict) -> str:
     """Generate a comprehensive analysis report"""
@@ -1168,6 +1031,91 @@ Provide a clear, concise answer focusing on the specific question. If relevant, 
                     st.session_state.chat_history.append({"role": "assistant", "content": answer})
             
             debug_state("After Processing User Question")
+
+# Add database connection setup UI
+def show_db_connection_form():
+    """Show database connection setup form."""
+    st.sidebar.markdown("### 🔌 Database Connection")
+    
+    # Initialize session state for db_params if not exists
+    if 'db_params' not in st.session_state:
+        st.session_state.db_params = {
+            'host': 'localhost',
+            'port': 5432,
+            'database': '',
+            'user': '',
+            'password': ''
+        }
+    
+    # Create form for database connection
+    with st.sidebar.form("db_connection_form"):
+        st.text_input(
+            "Host",
+            value=st.session_state.db_params.get('host', 'localhost'),
+            key="db_host"
+        )
+        st.number_input(
+            "Port",
+            value=st.session_state.db_params.get('port', 5432),
+            key="db_port"
+        )
+        st.text_input(
+            "Database",
+            value=st.session_state.db_params.get('database', ''),
+            key="db_name"
+        )
+        st.text_input(
+            "Username",
+            value=st.session_state.db_params.get('user', ''),
+            key="db_user"
+        )
+        st.text_input(
+            "Password",
+            value=st.session_state.db_params.get('password', ''),
+            type="password",
+            key="db_password"
+        )
+        
+        if st.form_submit_button("Connect"):
+            # Update connection parameters
+            st.session_state.db_params = {
+                'host': st.session_state.db_host,
+                'port': st.session_state.db_port,
+                'database': st.session_state.db_name,
+                'user': st.session_state.db_user,
+                'password': st.session_state.db_password
+            }
+            
+            # Test connection
+            connection = get_database_connection()
+            if connection:
+                try:
+                    with connection.cursor() as cursor:
+                        cursor.execute("SELECT version();")
+                        version = cursor.fetchone()[0]
+                        st.sidebar.success(f"✅ Connected to PostgreSQL {version}")
+                        
+                        # Get and store schema information
+                        cursor.execute("""
+                            SELECT 
+                                table_schema || '.' || table_name as table_name,
+                                string_agg(column_name || ' ' || data_type, ', ' ORDER BY ordinal_position) as columns
+                            FROM information_schema.columns
+                            WHERE table_schema NOT IN ('pg_catalog', 'information_schema')
+                            GROUP BY table_schema, table_name
+                        """)
+                        schema_info = []
+                        for table_name, columns in cursor.fetchall():
+                            schema_info.append(f"Table: {table_name}")
+                            schema_info.append(f"Columns: {columns}")
+                            schema_info.append("")
+                        
+                        st.session_state.schema_summary = "\n".join(schema_info)
+                        
+                except Exception as e:
+                    st.sidebar.error(f"Error fetching database info: {str(e)}")
+                finally:
+                    connection.close()
 
 # Main app code
 def main():
