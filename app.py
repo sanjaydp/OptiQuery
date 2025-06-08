@@ -36,7 +36,7 @@ import json
 from typing import Dict
 import statistics
 import openai
-from database import get_database_connection, measure_query_execution_time
+from database import get_database_connection, measure_query_execution_time, initialize_sqlite_database, get_schema_summary
 from optimization import optimize_query
 
 # Try importing PostgreSQL support
