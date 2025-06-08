@@ -35,6 +35,18 @@ from datetime import datetime
 import json
 from typing import Dict
 
+# Initialize session state at startup - MUST BE AT THE VERY TOP
+if "initialized" not in st.session_state:
+    init_session_state()
+debug_state("App Startup")
+
+# Page Configuration
+st.set_page_config(
+    page_title="OptiQuery – SQL Optimizer Assistant",
+    page_icon="🧠",
+    layout="wide"
+)
+
 # Initialize session state
 if "debug" not in st.session_state:
     st.session_state.debug = True  # Enable debugging
@@ -624,13 +636,6 @@ Expected Improvements:
 """
     return report
 
-# Page Configuration
-st.set_page_config(
-    page_title="OptiQuery – SQL Optimizer Assistant",
-    page_icon="🧠",
-    layout="wide"
-)
-
 # Custom CSS for better UI
 st.markdown("""
     <style>
@@ -827,17 +832,20 @@ if uploaded_file:
     except Exception as e:
         st.error(f"❌ Error processing database file: {str(e)}")
 
-# Footer and Chat Assistant
-if st.session_state.get("optimized_sql") and isinstance(st.session_state.optimized_sql, str) and st.session_state.optimized_sql.strip():
+# Chat Assistant Section
+def render_chat_assistant():
+    """Render the chat assistant if optimized query is available"""
+    if not st.session_state.get("optimized_sql"):
+        return
+        
     debug_state("Before Chat Assistant")
     
-    # Add Chat Assistant in sidebar
     with st.sidebar:
         st.markdown("## 💬 Ask OptiQuery Assistant")
         st.info("Ask any questions about the query, its optimization, or SQL best practices!")
         
         # Display chat history
-        for msg in st.session_state.chat_history:
+        for msg in st.session_state.get("chat_history", []):
             role = "user" if msg["role"] == "user" else "assistant"
             with st.chat_message(role):
                 st.markdown(msg["content"])
@@ -851,6 +859,8 @@ if st.session_state.get("optimized_sql") and isinstance(st.session_state.optimiz
             # Add user message to chat
             with st.chat_message("user"):
                 st.markdown(user_question)
+            if "chat_history" not in st.session_state:
+                st.session_state.chat_history = []
             st.session_state.chat_history.append({"role": "user", "content": user_question})
             
             # Generate context for the AI including full analysis results and query results
@@ -899,22 +909,30 @@ Provide a clear, concise answer focusing on the specific question. If relevant, 
             
             debug_state("After Processing User Question")
 
-# Footer
-st.markdown("---")
-st.markdown("📦 [View Source Code on GitHub](https://github.com/sanjaydp/optiquery)")
+# Main app code
+def main():
+    st.title("🧠 OptiQuery: SQL Optimizer Assistant")
+    
+    # Rest of your existing UI code...
+    
+    # Render chat assistant at the end
+    render_chat_assistant()
+    
+    # Footer
+    st.markdown("---")
+    st.markdown("📦 [View Source Code on GitHub](https://github.com/sanjaydp/optiquery)")
+    
+    # Add Query History View in Sidebar
+    with st.sidebar:
+        if st.session_state.query_history:
+            st.markdown("## 📜 Query History")
+            for idx, hist in enumerate(st.session_state.query_history):
+                with st.expander(f"Query {idx + 1} - {hist['timestamp']}"):
+                    st.code(hist['query'], language="sql")
+                    if "benchmark_results" in hist:
+                        st.markdown("**Performance:**")
+                        st.markdown(f"- Execution Time: {hist['benchmark_results'].get('average_execution_time', 'N/A')}s")
+                        st.markdown(f"- Result Size: {hist['benchmark_results'].get('result_set_size', 'N/A')} rows")
 
-# Add Query History View in Sidebar
-with st.sidebar:
-    if st.session_state.query_history:
-        st.markdown("## 📜 Query History")
-        for idx, hist in enumerate(st.session_state.query_history):
-            with st.expander(f"Query {idx + 1} - {hist['timestamp']}"):
-                st.code(hist['query'], language="sql")
-                if "benchmark_results" in hist:
-                    st.markdown("**Performance:**")
-                    st.markdown(f"- Execution Time: {hist['benchmark_results'].get('average_execution_time', 'N/A')}s")
-                    st.markdown(f"- Result Size: {hist['benchmark_results'].get('result_set_size', 'N/A')} rows")
-
-# Initialize session state at startup
-init_session_state()
-debug_state("App Startup")
+if __name__ == "__main__":
+    main()
