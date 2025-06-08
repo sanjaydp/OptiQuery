@@ -1268,7 +1268,9 @@ def main():
     
     query = None
     
+    # Handle query input based on selected method
     if query_input_method == "Upload SQL File":
+        # File upload section
         uploaded_file = st.file_uploader(
             "Upload SQL file",
             type=['sql'],
@@ -1282,7 +1284,7 @@ def main():
             except Exception as e:
                 st.error(f"Error reading SQL file: {str(e)}")
     else:
-        # Sample query template - only show after database is initialized
+        # Text input section
         sample_query = ""
         if st.session_state.db_initialized:
             sample_query = """SELECT *
@@ -1303,23 +1305,22 @@ AND order_total > 1000;"""
         )
     
     # Analysis options
-    with st.expander("⚙️ Analysis Options", expanded=False):
-        col1, col2 = st.columns(2)
-        with col1:
-            run_syntax_check = st.checkbox(
-                "Syntax Check",
-                value=True,
-                help="Check SQL syntax before execution"
-            )
-        with col2:
-            run_performance = st.checkbox(
-                "Performance Analysis",
-                value=True,
-                help="Analyze query performance and suggest optimizations"
-            )
-    
-    # Only show optimization button if we have a query and database is initialized
-    if query:
+    if query:  # Only show options if we have a query
+        with st.expander("⚙️ Analysis Options", expanded=False):
+            col1, col2 = st.columns(2)
+            with col1:
+                run_syntax_check = st.checkbox(
+                    "Syntax Check",
+                    value=True,
+                    help="Check SQL syntax before execution"
+                )
+            with col2:
+                run_performance = st.checkbox(
+                    "Performance Analysis",
+                    value=True,
+                    help="Analyze query performance and suggest optimizations"
+                )
+        
         # Store query in session state
         st.session_state.query = query
         
@@ -1331,10 +1332,10 @@ AND order_total > 1000;"""
                 help="Run selected analysis on the query",
                 disabled=not st.session_state.db_initialized
             )
-            
+        
         if not st.session_state.db_initialized:
             st.warning("⚠️ Please initialize or connect to a database first")
-            
+        
         if run_optimization and st.session_state.db_initialized:
             with st.spinner("Analyzing query..."):
                 analyze_query(query, run_syntax_check, run_performance)
