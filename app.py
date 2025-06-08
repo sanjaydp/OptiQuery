@@ -35,6 +35,7 @@ from datetime import datetime
 import json
 from typing import Dict
 import statistics
+import openai
 
 # Try importing PostgreSQL support
 try:
@@ -155,12 +156,51 @@ if 'sqlite_path' not in st.session_state:
             )
             
             conn.commit()
+            cursor.close()
             conn.close()
             
         except Exception as e:
             st.error(f"Error creating default database: {str(e)}")
     
     st.session_state.sqlite_path = default_db_path
+
+def get_database_connection():
+    """Get a database connection with proper error handling."""
+    try:
+        # Check if using SQLite
+        if st.session_state.get('use_sqlite', True):  # Default to SQLite if no preference
+            db_path = st.session_state.get('sqlite_path')
+            if not db_path:
+                st.error("⚠️ SQLite database path not configured.")
+                return None
+            return sqlite3.connect(db_path)
+        
+        # Try PostgreSQL connection if selected
+        if HAS_POSTGRES:
+            # Get connection parameters from session state or environment
+            db_params = st.session_state.get('db_params', {})
+            if not db_params:
+                st.error("⚠️ Database connection not configured. Please set up your database connection first.")
+                return None
+                
+            # Create connection
+            connection = psycopg2.connect(
+                host=db_params.get('host', 'localhost'),
+                port=db_params.get('port', 5432),
+                database=db_params.get('database'),
+                user=db_params.get('user'),
+                password=db_params.get('password')
+            )
+            
+            return connection
+        else:
+            st.error("⚠️ PostgreSQL support not available. Please use SQLite instead.")
+            return None
+            
+    except Exception as e:
+        st.error("❌ Database connection error:")
+        st.error(str(e))
+        return None
 
 def extract_schema_summary(db_path):
     """Create a string summary of all tables and columns for LLM context."""
