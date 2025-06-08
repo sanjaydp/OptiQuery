@@ -76,12 +76,14 @@ if "query_results" not in st.session_state:
         "original": {
             "data": None,
             "execution_time": None,
-            "row_count": None
+            "row_count": None,
+            "error": None
         },
         "optimized": {
             "data": None,
             "execution_time": None,
-            "row_count": None
+            "row_count": None,
+            "error": None
         }
     }
 
@@ -232,6 +234,49 @@ def store_analysis_results(analysis_type: str, results: dict):
         st.session_state.analysis_results = {}
     st.session_state.analysis_results[analysis_type] = results
 
+def store_query_results(result_type: str, results: dict):
+    """Store query results in session state"""
+    if results["success"]:
+        st.session_state.query_results[result_type] = {
+            "data": results["rows"],
+            "execution_time": results["execution_time"],
+            "row_count": results["row_count"],
+            "error": None
+        }
+    else:
+        st.session_state.query_results[result_type] = {
+            "data": None,
+            "execution_time": None,
+            "row_count": None,
+            "error": results.get("error", "Unknown error occurred")
+        }
+
+def display_query_results():
+    """Display query results and comparison"""
+    if st.session_state.query_results["original"]["data"] is not None:
+        st.markdown("#### 📊 Original Query Results")
+        st.dataframe(pd.DataFrame(st.session_state.query_results["original"]["data"]))
+        st.metric(
+            "Original Execution Time",
+            f"{st.session_state.query_results['original']['execution_time']}s"
+        )
+
+    if st.session_state.query_results["optimized"]["data"] is not None:
+        st.markdown("#### 🚀 Optimized Query Results")
+        st.dataframe(pd.DataFrame(st.session_state.query_results["optimized"]["data"]))
+        
+        # Calculate improvement percentage
+        orig_time = st.session_state.query_results["original"]["execution_time"]
+        opt_time = st.session_state.query_results["optimized"]["execution_time"]
+        if orig_time and opt_time:
+            improvement = ((orig_time - opt_time) / orig_time * 100)
+            st.metric(
+                "Optimized Execution Time",
+                f"{opt_time}s",
+                delta=f"{improvement:.1f}%",
+                delta_color="inverse"
+            )
+
 def run_analysis(query, analysis_options, db_path):
     """Enhanced run_analysis function with enterprise features"""
     with st.spinner("🔍 Analyzing your query..."):
@@ -243,12 +288,7 @@ def run_analysis(query, analysis_options, db_path):
         try:
             # Execute original query and store results
             original_results = execute_query(db_path, query)
-            if original_results["success"]:
-                st.session_state.query_results["original"] = {
-                    "data": original_results["rows"],
-                    "execution_time": original_results["execution_time"],
-                    "row_count": original_results["row_count"]
-                }
+            store_query_results("original", original_results)
             
             # Run enterprise analysis first
             enterprise_results = analyze_enterprise_features(query)
@@ -488,28 +528,10 @@ def run_analysis(query, analysis_options, db_path):
             # After optimization, execute optimized query if available
             if st.session_state.optimized_sql:
                 optimized_results = execute_query(db_path, st.session_state.optimized_sql)
-                if optimized_results["success"]:
-                    st.session_state.query_results["optimized"] = {
-                        "data": optimized_results["rows"],
-                        "execution_time": optimized_results["execution_time"],
-                        "row_count": optimized_results["row_count"]
-                    }
-                    
-                    # Display comparison
-                    st.markdown("#### 📊 Query Results Comparison")
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        st.metric(
-                            "Original Execution Time",
-                            f"{st.session_state.query_results['original']['execution_time']}s"
-                        )
-                    with col2:
-                        st.metric(
-                            "Optimized Execution Time",
-                            f"{st.session_state.query_results['optimized']['execution_time']}s",
-                            delta=f"{((st.session_state.query_results['original']['execution_time'] - st.session_state.query_results['optimized']['execution_time']) / st.session_state.query_results['original']['execution_time'] * 100):.1f}%",
-                            delta_color="inverse"
-                        )
+                store_query_results("optimized", optimized_results)
+            
+            # Display results
+            display_query_results()
             
         except Exception as e:
             st.error(f"Error during analysis: {str(e)}")
@@ -817,17 +839,19 @@ Query Results:
 Original Query:
 - Execution Time: {st.session_state.query_results['original']['execution_time']}s
 - Row Count: {st.session_state.query_results['original']['row_count']}
+- Error: {st.session_state.query_results['original']['error']}
 
 Optimized Query:
 - Execution Time: {st.session_state.query_results['optimized']['execution_time']}s
 - Row Count: {st.session_state.query_results['optimized']['row_count']}
+- Error: {st.session_state.query_results['optimized']['error']}
 
 Analysis Results:
 {json.dumps(st.session_state.analysis_results, indent=2)}
 
 User Question: {user_question}
 
-Provide a clear, concise answer focusing on the specific question. If relevant, reference the query analysis results and actual query performance metrics.
+Provide a clear, concise answer focusing on the specific question. If relevant, reference the query analysis results and actual query performance metrics. If there were any errors in query execution, mention those as well.
 """
             # Get AI response
             with st.chat_message("assistant"):
