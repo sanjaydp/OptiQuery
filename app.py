@@ -370,19 +370,60 @@ def run_analysis(query, analysis_options, db_path):
             analysis_result = analyze_sql(query)
             
             # Display issues
-            if analysis_result["issues"]:
+            issues = analysis_result.get("issues", [])
+            suggestions = analysis_result.get("suggestions", [])
+            complexity = analysis_result.get("complexity", {})
+            
+            if issues:
                 st.markdown("**⚠️ Potential Issues:**")
-                for issue in analysis_result["issues"]:
+                for issue in issues:
                     st.warning(issue)
             else:
                 st.success("✅ No major issues found")
             
             # Display suggestions
-            if analysis_result["suggestions"]:
+            if suggestions:
                 st.markdown("**💡 Optimization Suggestions:**")
-                for suggestion in analysis_result["suggestions"]:
+                for suggestion in suggestions:
                     st.info(suggestion)
             
+            # Display complexity analysis
+            if complexity:
+                st.markdown("**🔍 Query Complexity Analysis:**")
+                
+                # Create three columns for metrics
+                col1, col2, col3 = st.columns(3)
+                
+                with col1:
+                    st.metric(
+                        "Complexity Score",
+                        f"{complexity.get('score', 0)}/100",
+                        delta=None,
+                        delta_color="inverse"
+                    )
+                
+                with col2:
+                    st.metric(
+                        "Complexity Level",
+                        complexity.get('level', 'N/A'),
+                        delta=None
+                    )
+                
+                # Display complexity factors
+                if 'factors' in complexity:
+                    st.markdown("**Complexity Factors:**")
+                    factors = complexity['factors']
+                    factor_df = pd.DataFrame({
+                        'Factor': ['Joins', 'Where Conditions', 'Subqueries', 'Function Calls'],
+                        'Count': [
+                            factors.get('joins', 0),
+                            factors.get('conditions', 0),
+                            factors.get('subqueries', 0),
+                            factors.get('functions', 0)
+                        ]
+                    })
+                    st.dataframe(factor_df, hide_index=True)
+
             progress_bar.progress(60)
             
             # Display complexity analysis
