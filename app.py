@@ -71,6 +71,19 @@ if "analysis_results" not in st.session_state:
         "index_recommendations": {},
         "query_plan": {}
     }
+if "query_results" not in st.session_state:
+    st.session_state.query_results = {
+        "original": {
+            "data": None,
+            "execution_time": None,
+            "row_count": None
+        },
+        "optimized": {
+            "data": None,
+            "execution_time": None,
+            "row_count": None
+        }
+    }
 
 def extract_schema_summary(db_path):
     """Create a string summary of all tables and columns for LLM context."""
@@ -228,6 +241,15 @@ def run_analysis(query, analysis_options, db_path):
         st.session_state.original_query = query
         
         try:
+            # Execute original query and store results
+            original_results = execute_query(db_path, query)
+            if original_results["success"]:
+                st.session_state.query_results["original"] = {
+                    "data": original_results["rows"],
+                    "execution_time": original_results["execution_time"],
+                    "row_count": original_results["row_count"]
+                }
+            
             # Run enterprise analysis first
             enterprise_results = analyze_enterprise_features(query)
             display_enterprise_analysis(query, enterprise_results)
@@ -462,6 +484,32 @@ def run_analysis(query, analysis_options, db_path):
             
             progress_bar.progress(100)
             st.success("✅ Analysis Complete!")
+            
+            # After optimization, execute optimized query if available
+            if st.session_state.optimized_sql:
+                optimized_results = execute_query(db_path, st.session_state.optimized_sql)
+                if optimized_results["success"]:
+                    st.session_state.query_results["optimized"] = {
+                        "data": optimized_results["rows"],
+                        "execution_time": optimized_results["execution_time"],
+                        "row_count": optimized_results["row_count"]
+                    }
+                    
+                    # Display comparison
+                    st.markdown("#### 📊 Query Results Comparison")
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.metric(
+                            "Original Execution Time",
+                            f"{st.session_state.query_results['original']['execution_time']}s"
+                        )
+                    with col2:
+                        st.metric(
+                            "Optimized Execution Time",
+                            f"{st.session_state.query_results['optimized']['execution_time']}s",
+                            delta=f"{((st.session_state.query_results['original']['execution_time'] - st.session_state.query_results['optimized']['execution_time']) / st.session_state.query_results['original']['execution_time'] * 100):.1f}%",
+                            delta_color="inverse"
+                        )
             
         except Exception as e:
             st.error(f"Error during analysis: {str(e)}")
@@ -755,7 +803,7 @@ if st.session_state.optimized_sql.strip():
                 st.markdown(user_question)
             st.session_state.chat_history.append({"role": "user", "content": user_question})
             
-            # Generate context for the AI including full analysis results
+            # Generate context for the AI including full analysis results and query results
             context = f"""
 Analysis Context:
 - Original Query: {st.session_state.original_query}
@@ -765,12 +813,21 @@ Analysis Context:
 - Identified Issues: {', '.join(st.session_state.issues) if st.session_state.issues else 'None'}
 - Schema: {st.session_state.get('schema_summary', 'Not available')}
 
+Query Results:
+Original Query:
+- Execution Time: {st.session_state.query_results['original']['execution_time']}s
+- Row Count: {st.session_state.query_results['original']['row_count']}
+
+Optimized Query:
+- Execution Time: {st.session_state.query_results['optimized']['execution_time']}s
+- Row Count: {st.session_state.query_results['optimized']['row_count']}
+
 Analysis Results:
 {json.dumps(st.session_state.analysis_results, indent=2)}
 
 User Question: {user_question}
 
-Provide a clear, concise answer focusing on the specific question. If relevant, reference the query analysis results.
+Provide a clear, concise answer focusing on the specific question. If relevant, reference the query analysis results and actual query performance metrics.
 """
             # Get AI response
             with st.chat_message("assistant"):
