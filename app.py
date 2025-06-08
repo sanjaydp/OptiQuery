@@ -91,16 +91,18 @@ def init_session_state():
 
 def debug_state(location: str):
     """Print debug information about the session state"""
-    if st.session_state.debug:
-        st.sidebar.markdown(f"### 🔍 Debug Info: {location}")
-        st.sidebar.write("Session State Keys:", list(st.session_state.keys()))
-        st.sidebar.write("Has Query Results:", bool(st.session_state.query_results["original"]["data"] or st.session_state.query_results["optimized"]["data"]))
-        st.sidebar.write("Analysis Results Keys:", list(st.session_state.analysis_results.keys()))
-        st.sidebar.write("Last Analysis ID:", st.session_state.last_analysis_id)
+    if not st.session_state.debug:
+        return
+        
+    st.sidebar.markdown(f"### 🔍 Debug Info: {location}")
+    st.sidebar.write("Session State Keys:", list(st.session_state.keys()))
+    st.sidebar.write("Has Query Results:", bool(st.session_state.query_results["original"]["data"] or st.session_state.query_results["optimized"]["data"]))
+    st.sidebar.write("Analysis Results Keys:", list(st.session_state.analysis_results.keys()))
+    st.sidebar.write("Last Analysis ID:", st.session_state.last_analysis_id)
 
 # Initialize debug flag first
 if "debug" not in st.session_state:
-    st.session_state.debug = True  # Enable debugging
+    st.session_state.debug = False  # Disable debugging by default
 
 # Now initialize the rest of the session state
 if "initialized" not in st.session_state:
@@ -256,10 +258,6 @@ def store_analysis_results(analysis_type: str, results: dict):
 
 def store_query_results(result_type: str, results: dict):
     """Store query results in session state with debugging"""
-    if st.session_state.debug:
-        st.sidebar.markdown(f"### 💾 Storing {result_type} Query Results")
-        st.sidebar.write("Results:", results)
-    
     if results["success"]:
         st.session_state.query_results[result_type] = {
             "data": results["rows"],
