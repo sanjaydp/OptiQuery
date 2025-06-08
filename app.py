@@ -118,6 +118,50 @@ if "initialized" not in st.session_state:
     init_session_state()
 debug_state("App Startup")
 
+# Initialize session state for database settings
+if 'use_sqlite' not in st.session_state:
+    st.session_state.use_sqlite = True
+
+if 'sqlite_path' not in st.session_state:
+    # Create default SQLite database
+    temp_dir = "temp_db"
+    os.makedirs(temp_dir, exist_ok=True)
+    default_db_path = os.path.join(temp_dir, "optiquery_default.db")
+    
+    if not os.path.exists(default_db_path):
+        try:
+            # Create new database with a sample table
+            conn = sqlite3.connect(default_db_path)
+            cursor = conn.cursor()
+            
+            # Create a sample table
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS sample_data (
+                    id INTEGER PRIMARY KEY,
+                    name TEXT,
+                    value INTEGER
+                )
+            """)
+            
+            # Insert some sample data
+            sample_data = [
+                (1, 'Example A', 100),
+                (2, 'Example B', 200),
+                (3, 'Example C', 300)
+            ]
+            cursor.executemany(
+                "INSERT OR IGNORE INTO sample_data (id, name, value) VALUES (?, ?, ?)",
+                sample_data
+            )
+            
+            conn.commit()
+            conn.close()
+            
+        except Exception as e:
+            st.error(f"Error creating default database: {str(e)}")
+    
+    st.session_state.sqlite_path = default_db_path
+
 def extract_schema_summary(db_path):
     """Create a string summary of all tables and columns for LLM context."""
     try:
@@ -1058,6 +1102,10 @@ def show_db_connection_form():
     """Show database connection setup form."""
     st.sidebar.markdown("### 🔌 Database Connection")
     
+    # Show current database status
+    if st.session_state.get('sqlite_path'):
+        st.sidebar.success(f"✅ Using SQLite database: {os.path.basename(st.session_state.sqlite_path)}")
+    
     # Database type selector
     db_type = st.sidebar.selectbox(
         "Database Type",
@@ -1233,7 +1281,30 @@ def show_db_connection_form():
             except Exception as e:
                 st.sidebar.error(f"Error uploading database: {str(e)}")
         else:
-            st.sidebar.info("Please upload a SQLite database file or create a new one.")
+            st.sidebar.info("Using default database. You can upload a different database file or create a new one.")
+            
+            # Show schema of default database
+            connection = get_database_connection()
+            if connection:
+                try:
+                    cursor = connection.cursor()
+                    cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
+                    tables = cursor.fetchall()
+                    
+                    schema_info = []
+                    for (table_name,) in tables:
+                        cursor.execute(f"PRAGMA table_info({table_name})")
+                        columns = cursor.fetchall()
+                        schema_info.append(f"Table: {table_name}")
+                        schema_info.append(f"Columns: {', '.join(f'{col[1]} ({col[2]})' for col in columns)}")
+                        schema_info.append("")
+                    
+                    st.session_state.schema_summary = "\n".join(schema_info)
+                    
+                except Exception as e:
+                    st.sidebar.error(f"Error fetching database info: {str(e)}")
+                finally:
+                    connection.close()
 
 # Main app code
 def main():
