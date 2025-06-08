@@ -534,6 +534,29 @@ def run_analysis(query, analysis_options, db_path):
                 # Store optimized query in session state
                 st.session_state.optimized_sql = optimization_result["optimized_query"]
                 
+                # Display analysis results
+                if "analysis" in optimization_result:
+                    st.markdown("**Query Analysis:**")
+                    analysis = optimization_result["analysis"]
+                    
+                    # Create columns for analysis metrics
+                    col1, col2 = st.columns(2)
+                    
+                    with col1:
+                        st.markdown("**Complexity Analysis:**")
+                        st.info(analysis["complexity"])
+                        
+                        st.markdown("**Data Access Patterns:**")
+                        st.info(analysis["data_access_patterns"])
+                    
+                    with col2:
+                        st.markdown("**Identified Bottlenecks:**")
+                        for bottleneck in analysis["bottlenecks"]:
+                            st.warning(f"• {bottleneck}")
+                        
+                        st.markdown("**Resource Usage:**")
+                        st.info(analysis["resource_usage"])
+                
                 # Display optimized query
                 st.markdown("**Optimized Query:**")
                 st.code(optimization_result["optimized_query"], language="sql")
@@ -542,11 +565,62 @@ def run_analysis(query, analysis_options, db_path):
                 st.markdown("**Optimization Details:**")
                 st.info(optimization_result["optimization_reasoning"])
                 
-                # Show estimated improvement
-                st.metric(
-                    label="Estimated Performance Improvement",
-                    value=optimization_result["estimated_improvement"]
-                )
+                # Show changes made with impact analysis
+                st.markdown("**Changes Made:**")
+                for change in optimization_result["changes_made"]:
+                    st.markdown(f"• {change}")
+                
+                # Show validation steps
+                if "validation_steps" in optimization_result:
+                    st.markdown("**Validation Steps:**")
+                    for step in optimization_result["validation_steps"]:
+                        st.markdown(f"• {step}")
+                
+                # Create metrics columns
+                col1, col2, col3 = st.columns(3)
+                
+                with col1:
+                    # Show estimated improvement
+                    st.metric(
+                        label="Estimated Performance Improvement",
+                        value=optimization_result["estimated_improvement"],
+                        help="Conservative estimate based on analysis"
+                    )
+                
+                with col2:
+                    # Show confidence level with explanation
+                    confidence = optimization_result["confidence"]
+                    confidence_color = {
+                        "high": "🟢",
+                        "medium": "🟡",
+                        "low": "🔴"
+                    }.get(confidence.lower(), "⚪")
+                    st.metric(
+                        label="Optimization Confidence",
+                        value=f"{confidence_color} {confidence.title()}",
+                        help="Confidence in the optimization impact"
+                    )
+                
+                with col3:
+                    # Show number of suggested indexes
+                    index_count = len(optimization_result.get("index_suggestions", []))
+                    st.metric(
+                        label="Suggested Indexes",
+                        value=index_count,
+                        help="Number of recommended index changes"
+                    )
+                
+                # Show warnings if any
+                if optimization_result.get("warnings"):
+                    st.markdown("**⚠️ Important Considerations:**")
+                    for warning in optimization_result["warnings"]:
+                        st.warning(warning)
+                
+                # Show index suggestions with justification
+                if optimization_result.get("index_suggestions"):
+                    st.markdown("**📊 Recommended Indexes:**")
+                    for suggestion in optimization_result["index_suggestions"]:
+                        st.code(suggestion, language="sql")
             
             progress_bar.progress(90)
             

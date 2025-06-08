@@ -18,82 +18,120 @@ def optimize_query(query: str, schema_info: str = None, table_stats: dict = None
     client = get_openai_client()
     
     # Build a comprehensive context for the LLM
-    context = "You are a SQL optimization expert. Your task is to optimize the given SQL query for better performance."
+    context = [
+        "You are an expert SQL optimization engine. Analyze the query considering:",
+        "1. Query structure and complexity",
+        "2. Table relationships and cardinality",
+        "3. Index usage and opportunities",
+        "4. Join strategies and order",
+        "5. Subquery and CTE optimizations",
+        "6. Data access patterns",
+        "7. Potential bottlenecks"
+    ]
     
     if schema_info:
-        context += f"\n\nDatabase Schema:\n{schema_info}"
+        context.append("\nDatabase Schema:\n" + schema_info)
     
     if table_stats:
-        context += "\n\nTable Statistics:\n"
+        context.append("\nTable Statistics:")
         for table, stats in table_stats.items():
-            context += f"- {table}: {stats['row_count']:,} rows\n"
+            context.append(f"- {table}:")
+            context.append(f"  • Rows: {stats['row_count']:,}")
             if 'indexes' in stats:
-                context += f"  Existing indexes: {', '.join(stats['indexes'].keys())}\n"
+                context.append(f"  • Indexes: {', '.join(stats['indexes'].keys())}")
+            if 'columns' in stats:
+                context.append(f"  • Columns: {', '.join(stats['columns'])}")
     
-    context += "\n\nOptimize the following query for better performance. Consider:"
-    context += "\n- Table sizes and data distribution"
-    context += "\n- Appropriate indexing suggestions"
-    context += "\n- Join order optimization"
-    context += "\n- Subquery optimization"
-    context += "\n- Proper column selection"
-    context += "\n- Query rewriting techniques"
-    context += "\n\nBe conservative with improvement estimates. Only suggest significant changes if they will clearly improve performance."
+    context.extend([
+        "\nOptimization Guidelines:",
+        "- Suggest indexes only when they provide significant benefit",
+        "- Consider table sizes and data distribution",
+        "- Evaluate trade-offs between different optimization strategies",
+        "- Provide clear reasoning for each optimization",
+        "- Be conservative with improvement estimates",
+        "- Consider both read and write performance impacts",
+        "- Evaluate memory and resource usage",
+        "\nAnalyze and optimize the following query:"
+    ])
     
-    prompt = f"""{context}
+    prompt = f"""{'\n'.join(context)}
 
 SQL Query:
 {query}
 
-Return the following in a JSON format:
+Provide a detailed analysis in JSON format:
 {{
+    "analysis": {{
+        "complexity": "detailed analysis of query complexity",
+        "bottlenecks": ["identified performance bottlenecks"],
+        "data_access_patterns": "analysis of how data is accessed",
+        "resource_usage": "expected resource utilization"
+    }},
     "optimized_query": "the optimized SQL query",
-    "index_suggestions": ["list of suggested indexes"],
-    "optimization_reasoning": "detailed explanation of each optimization made and its expected impact",
-    "estimated_improvement": "estimated % improvement (be conservative, use ranges like '10-15%' if uncertain)",
-    "confidence": "high/medium/low - your confidence in the optimization's impact",
-    "changes_made": ["list each specific change made"],
-    "warnings": ["any potential risks or trade-offs"]
+    "index_suggestions": ["list of suggested indexes with clear justification"],
+    "optimization_reasoning": "detailed explanation of each optimization",
+    "estimated_improvement": "conservative improvement estimate with range",
+    "confidence": "high/medium/low with explanation",
+    "changes_made": ["specific changes with impact analysis"],
+    "warnings": ["potential risks or trade-offs"],
+    "validation_steps": ["suggested steps to validate improvements"]
 }}"""
 
+    # Use GPT-4 for better analysis
     response = client.chat.completions.create(
-        model="gpt-3.5-turbo",
+        model="gpt-4-turbo-preview",  # Using the latest GPT-4 model
         messages=[
-            {"role": "system", "content": "You are a SQL performance expert that provides detailed optimization suggestions. Always respond with valid JSON. Be conservative in performance improvement estimates."},
+            {"role": "system", "content": "You are an expert SQL optimization engine with deep understanding of database internals, query planning, and performance tuning. Provide detailed, practical optimizations with clear reasoning."},
             {"role": "user", "content": prompt}
         ],
-        temperature=0.2
+        temperature=0.1,  # Lower temperature for more focused responses
+        max_tokens=2000
     )
     
     try:
         result = json.loads(response.choices[0].message.content)
-        # Ensure the optimized query is different from the original
+        
+        # Validate and enhance the response
         if result["optimized_query"].strip() == query.strip():
-            result["estimated_improvement"] = "0%"
-            result["confidence"] = "high"
-            result["changes_made"] = ["No changes needed - query appears to be already optimized"]
-            result["warnings"] = ["No optimization opportunities identified"]
+            result.update({
+                "estimated_improvement": "0%",
+                "confidence": "high",
+                "changes_made": ["No changes needed - query appears to be already optimized"],
+                "warnings": ["No optimization opportunities identified"],
+                "validation_steps": ["Query is already well-optimized, no validation needed"]
+            })
+        else:
+            # Add validation steps if not present
+            if "validation_steps" not in result:
+                result["validation_steps"] = [
+                    "Compare execution plans of original and optimized queries",
+                    "Test with representative data volumes",
+                    "Monitor resource utilization",
+                    "Verify result consistency"
+                ]
+        
         return result
     except json.JSONDecodeError as e:
-        # If JSON parsing fails, try to extract the optimized query from the raw response
-        content = response.choices[0].message.content
         return {
-            "optimized_query": query,  # Return original query as fallback
+            "optimized_query": query,
             "index_suggestions": [],
-            "optimization_reasoning": "Error parsing optimization response. Using original query.",
+            "optimization_reasoning": f"Error parsing optimization response: {str(e)}",
             "estimated_improvement": "0%",
             "confidence": "low",
             "changes_made": [],
-            "warnings": [f"Error during optimization: {str(e)}"]
+            "warnings": ["Optimization analysis failed"],
+            "validation_steps": ["Manual review required"]
         }
     except Exception as e:
         return {
             "optimized_query": query,
             "index_suggestions": [],
-            "optimization_reasoning": f"Error during optimization: {str(e)}",
+            "optimization_reasoning": f"Optimization error: {str(e)}",
             "estimated_improvement": "0%",
             "confidence": "low",
             "changes_made": [],
-            "warnings": ["Optimization failed - using original query"]
+            "warnings": ["Optimization process failed"],
+            "validation_steps": ["Manual review required"]
         }
 
 def explain_optimization(original_query: str, optimized_query: str) -> str:
