@@ -62,6 +62,15 @@ if "optimization_strategy" not in st.session_state:
     st.session_state.optimization_strategy = "balanced"
 if "advanced_settings" not in st.session_state:
     st.session_state.advanced_settings = {}
+if "chat_history" not in st.session_state:
+    st.session_state.chat_history = []
+if "analysis_results" not in st.session_state:
+    st.session_state.analysis_results = {
+        "syntax": {},
+        "performance": {},
+        "index_recommendations": {},
+        "query_plan": {}
+    }
 
 def extract_schema_summary(db_path):
     """Create a string summary of all tables and columns for LLM context."""
@@ -204,6 +213,12 @@ def generate_documentation(query, analysis_results):
     
     return doc
 
+def store_analysis_results(analysis_type: str, results: dict):
+    """Store analysis results in session state"""
+    if "analysis_results" not in st.session_state:
+        st.session_state.analysis_results = {}
+    st.session_state.analysis_results[analysis_type] = results
+
 def run_analysis(query, analysis_options, db_path):
     """Enhanced run_analysis function with enterprise features"""
     with st.spinner("🔍 Analyzing your query..."):
@@ -216,6 +231,7 @@ def run_analysis(query, analysis_options, db_path):
             # Run enterprise analysis first
             enterprise_results = analyze_enterprise_features(query)
             display_enterprise_analysis(query, enterprise_results)
+            store_analysis_results("enterprise", enterprise_results)
             progress_bar.progress(30)
             
             # Collect table statistics
@@ -254,6 +270,7 @@ def run_analysis(query, analysis_options, db_path):
             if "Syntax Check" in analysis_options:
                 st.markdown("#### 📝 Query Analysis")
                 analysis_result = analyze_sql(query)
+                store_analysis_results("syntax", analysis_result)
                 
                 # Display issues
                 issues = analysis_result.get("issues", [])
@@ -276,6 +293,8 @@ def run_analysis(query, analysis_options, db_path):
                 # Display complexity analysis
                 if complexity:
                     st.markdown("**🔍 Query Complexity Analysis:**")
+                    st.session_state.complexity_score = complexity.get('score', 0)
+                    st.session_state.complexity_label = complexity.get('level', 'N/A')
                     
                     # Create three columns for metrics
                     col1, col2, col3 = st.columns(3)
@@ -322,6 +341,7 @@ def run_analysis(query, analysis_options, db_path):
                     schema_info=st.session_state.get("schema_summary", ""),
                     table_stats=table_stats
                 )
+                store_analysis_results("performance", optimization_result)
                 
                 # Store optimized query in session state
                 st.session_state.optimized_sql = optimization_result["optimized_query"]
@@ -720,10 +740,6 @@ if st.session_state.optimized_sql.strip():
         st.markdown("## 💬 Ask OptiQuery Assistant")
         st.info("Ask any questions about the query, its optimization, or SQL best practices!")
         
-        # Initialize chat history if not exists
-        if "chat_history" not in st.session_state:
-            st.session_state.chat_history = []
-        
         # Display chat history
         for msg in st.session_state.chat_history:
             role = "user" if msg["role"] == "user" else "assistant"
@@ -739,14 +755,18 @@ if st.session_state.optimized_sql.strip():
                 st.markdown(user_question)
             st.session_state.chat_history.append({"role": "user", "content": user_question})
             
-            # Generate context for the AI
+            # Generate context for the AI including full analysis results
             context = f"""
 Analysis Context:
 - Original Query: {st.session_state.original_query}
 - Optimized Query: {st.session_state.optimized_sql}
 - Complexity Score: {st.session_state.complexity_score}
+- Complexity Level: {st.session_state.complexity_label}
 - Identified Issues: {', '.join(st.session_state.issues) if st.session_state.issues else 'None'}
 - Schema: {st.session_state.get('schema_summary', 'Not available')}
+
+Analysis Results:
+{json.dumps(st.session_state.analysis_results, indent=2)}
 
 User Question: {user_question}
 
