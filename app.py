@@ -469,6 +469,61 @@ if uploaded_file:
     except Exception as e:
         st.error(f"❌ Error processing database file: {str(e)}")
 
+# Footer and Chat Assistant
+if st.session_state.optimized_sql.strip():
+    # Add Chat Assistant in sidebar
+    with st.sidebar:
+        st.markdown("## 💬 Ask OptiQuery Assistant")
+        st.info("Ask any questions about the query, its optimization, or SQL best practices!")
+        
+        # Initialize chat history if not exists
+        if "chat_history" not in st.session_state:
+            st.session_state.chat_history = []
+        
+        # Display chat history
+        for msg in st.session_state.chat_history:
+            role = "user" if msg["role"] == "user" else "assistant"
+            with st.chat_message(role):
+                st.markdown(msg["content"])
+        
+        # Get user question
+        user_question = st.chat_input("Ask about the query...")
+        
+        if user_question:
+            # Add user message to chat
+            with st.chat_message("user"):
+                st.markdown(user_question)
+            st.session_state.chat_history.append({"role": "user", "content": user_question})
+            
+            # Generate context for the AI
+            context = f"""
+Analysis Context:
+- Original Query: {st.session_state.original_query}
+- Optimized Query: {st.session_state.optimized_sql}
+- Complexity Score: {st.session_state.complexity_score}
+- Identified Issues: {', '.join(st.session_state.issues) if st.session_state.issues else 'None'}
+- Schema: {st.session_state.get('schema_summary', 'Not available')}
+
+User Question: {user_question}
+
+Provide a clear, concise answer focusing on the specific question. If relevant, reference the query analysis results.
+"""
+            # Get AI response
+            with st.chat_message("assistant"):
+                with st.spinner("Thinking..."):
+                    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+                    response = client.chat.completions.create(
+                        model="gpt-3.5-turbo",
+                        messages=[
+                            {"role": "system", "content": "You are a SQL expert assistant helping users understand query optimization. Be concise but thorough."},
+                            {"role": "user", "content": context}
+                        ],
+                        temperature=0.7
+                    )
+                    answer = response.choices[0].message.content.strip()
+                    st.markdown(answer)
+                    st.session_state.chat_history.append({"role": "assistant", "content": answer})
+
 # Footer
 st.markdown("---")
 st.markdown("📦 [View Source Code on GitHub](https://github.com/sanjaydp/optiquery)")
