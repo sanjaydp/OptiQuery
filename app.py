@@ -932,21 +932,58 @@ def show_db_connection_form():
         st.session_state.use_sqlite = (db_type == "SQLite")
         
         if st.session_state.use_sqlite:
-            # SQLite settings
-            sqlite_path = st.text_input(
-                "SQLite Database Path",
-                value=st.session_state.get('sqlite_path', 'optiquery.db'),
-                help="Path to your SQLite database file"
+            # SQLite connection options
+            sqlite_option = st.radio(
+                "Choose SQLite Option:",
+                ["Upload Database File", "Use Sample Database", "Specify Database Path"],
+                help="Select how you want to connect to SQLite"
             )
-            st.session_state.sqlite_path = sqlite_path
             
-            if st.button("Initialize Sample Database"):
-                with st.spinner("Initializing database..."):
-                    initialize_sqlite_database()
-                    st.session_state.schema_summary = get_schema_summary()
+            if sqlite_option == "Upload Database File":
+                uploaded_file = st.file_uploader(
+                    "Upload SQLite Database",
+                    type=['db', 'sqlite', 'sqlite3'],
+                    help="Upload your SQLite database file"
+                )
+                if uploaded_file:
+                    # Save the uploaded file
+                    import os
+                    save_path = os.path.join(os.getcwd(), "uploaded_database.db")
+                    with open(save_path, "wb") as f:
+                        f.write(uploaded_file.getvalue())
+                    st.session_state.sqlite_path = save_path
                     st.session_state.db_initialized = True
-                    st.success("✅ Sample database initialized!")
-                    st.rerun()
+                    st.session_state.schema_summary = get_schema_summary()
+                    st.success("✅ Database file uploaded successfully!")
+                    
+            elif sqlite_option == "Use Sample Database":
+                if st.button("Initialize Sample Database"):
+                    with st.spinner("Initializing database..."):
+                        initialize_sqlite_database()
+                        st.session_state.sqlite_path = 'optiquery.db'
+                        st.session_state.schema_summary = get_schema_summary()
+                        st.session_state.db_initialized = True
+                        st.success("✅ Sample database initialized!")
+                        st.rerun()
+            
+            else:  # Specify Database Path
+                sqlite_path = st.text_input(
+                    "SQLite Database Path",
+                    value=st.session_state.get('sqlite_path', 'optiquery.db'),
+                    help="Path to your SQLite database file"
+                )
+                st.session_state.sqlite_path = sqlite_path
+                if st.button("Connect to Database"):
+                    try:
+                        conn = get_database_connection()
+                        if conn:
+                            conn.close()
+                            st.session_state.db_initialized = True
+                            st.session_state.schema_summary = get_schema_summary()
+                            st.success("✅ Successfully connected to database!")
+                            st.rerun()
+                    except Exception as e:
+                        st.error(f"❌ Failed to connect to database: {str(e)}")
                 
         else:
             # PostgreSQL settings
@@ -1036,6 +1073,11 @@ def main():
     # Show database connection form in sidebar
     show_db_connection_form()
     
+    # Only show query interface if database is initialized
+    if not st.session_state.db_initialized:
+        st.info("👆 Please connect to a database using the sidebar options first.")
+        return
+        
     # Create tabs for different functionalities
     query_tab, nl_tab = st.tabs(["🔍 SQL Query Optimization", "🤖 Natural Language to SQL"])
     
@@ -1067,9 +1109,7 @@ def main():
                     st.error(f"Error reading SQL file: {str(e)}")
         else:
             # Text input section
-            sample_query = ""
-            if st.session_state.db_initialized:
-                sample_query = """SELECT *
+            sample_query = """SELECT *
 FROM orders
 WHERE customer_id IN (
     SELECT customer_id 
@@ -1106,19 +1146,8 @@ AND order_total > 1000;"""
             # Store query in session state
             st.session_state.query = query
             
-            col1, col2 = st.columns([1, 4])
-            with col1:
-                run_optimization = st.button(
-                    "Analyze & Optimize",
-                    type="primary",
-                    help="Run selected analysis on the query",
-                    disabled=not st.session_state.db_initialized
-                )
-            
-            if not st.session_state.db_initialized:
-                st.warning("⚠️ Please initialize or connect to a database first")
-            
-            if run_optimization and st.session_state.db_initialized:
+            # Add analyze button
+            if st.button("🚀 Analyze & Optimize Query", type="primary"):
                 with st.spinner("Analyzing query..."):
                     analyze_query(query, run_syntax_check, run_performance)
     
