@@ -263,6 +263,8 @@ def store_query_results(result_type: str, results: dict):
             "data": results["rows"],
             "execution_time": results["execution_time"],
             "row_count": results["row_count"],
+            "min_time": results.get("min_time"),
+            "max_time": results.get("max_time"),
             "error": None
         }
     else:
@@ -270,6 +272,8 @@ def store_query_results(result_type: str, results: dict):
             "data": None,
             "execution_time": None,
             "row_count": None,
+            "min_time": None,
+            "max_time": None,
             "error": results.get("error", "Unknown error occurred")
         }
     
@@ -280,6 +284,17 @@ def display_query_results():
     """Display query results and comparison with debugging"""
     debug_state("Before Displaying Results")
     
+    def format_time(time_value):
+        """Format time value with appropriate units and precision"""
+        if time_value is None:
+            return "N/A"
+        if time_value < 0.001:  # Less than 1ms
+            return f"{time_value * 1000000:.2f}μs"
+        elif time_value < 1:  # Less than 1s
+            return f"{time_value * 1000:.2f}ms"
+        else:
+            return f"{time_value:.3f}s"
+    
     if st.session_state.query_results["original"]["data"] is not None:
         st.markdown("#### 📊 Original Query Results")
         st.dataframe(pd.DataFrame(st.session_state.query_results["original"]["data"]))
@@ -287,22 +302,23 @@ def display_query_results():
         # Show detailed timing metrics
         col1, col2, col3 = st.columns(3)
         with col1:
+            exec_time = st.session_state.query_results['original']['execution_time']
             st.metric(
                 "Original Execution Time",
-                f"{st.session_state.query_results['original']['execution_time']}s",
+                format_time(exec_time),
                 help="Median execution time over multiple runs"
             )
         with col2:
             min_time = st.session_state.query_results['original'].get('min_time')
             st.metric(
                 "Min Time",
-                f"{min_time}s" if min_time is not None else "N/A"
+                format_time(min_time)
             )
         with col3:
             max_time = st.session_state.query_results['original'].get('max_time')
             st.metric(
                 "Max Time",
-                f"{max_time}s" if max_time is not None else "N/A"
+                format_time(max_time)
             )
 
     if st.session_state.query_results["optimized"]["data"] is not None:
@@ -322,7 +338,7 @@ def display_query_results():
                 delta_color = "normal" if improvement > 0 else "inverse"
                 st.metric(
                     "Optimized Execution Time",
-                    f"{opt_time}s",
+                    format_time(opt_time),
                     delta=delta,
                     delta_color=delta_color
                 )
@@ -330,13 +346,13 @@ def display_query_results():
             min_time = st.session_state.query_results['optimized'].get('min_time')
             st.metric(
                 "Min Time",
-                f"{min_time}s" if min_time is not None else "N/A"
+                format_time(min_time)
             )
         with col3:
             max_time = st.session_state.query_results['optimized'].get('max_time')
             st.metric(
                 "Max Time",
-                f"{max_time}s" if max_time is not None else "N/A"
+                format_time(max_time)
             )
         
         # Show optimization confidence and warnings
