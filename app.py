@@ -319,13 +319,58 @@ if "db_path" in st.session_state:
             with st.spinner("Analyzing query..."):
                 # 1. Syntax Check
                 if "Syntax Check" in analysis_options:
-                    st.markdown("#### 📝 Syntax Analysis")
-                    issues = analyze_sql(query)
-                    if issues:
-                        for issue in issues:
-                            st.warning(f"⚠️ {issue}")
+                    st.markdown("#### 📝 Query Analysis")
+                    analysis_result = analyze_sql(query)
+                    
+                    # Display issues
+                    if analysis_result["issues"]:
+                        st.markdown("**⚠️ Potential Issues:**")
+                        for issue in analysis_result["issues"]:
+                            st.warning(issue)
                     else:
-                        st.success("✅ No syntax issues found")
+                        st.success("✅ No major issues found")
+                    
+                    # Display suggestions
+                    if analysis_result["suggestions"]:
+                        st.markdown("**💡 Optimization Suggestions:**")
+                        for suggestion in analysis_result["suggestions"]:
+                            st.info(suggestion)
+                    
+                    # Display complexity analysis
+                    complexity = analysis_result["complexity"]
+                    st.markdown("**🔍 Query Complexity Analysis:**")
+                    
+                    # Create three columns for metrics
+                    col1, col2, col3 = st.columns(3)
+                    
+                    with col1:
+                        st.metric(
+                            "Complexity Score",
+                            f"{complexity['score']}/100",
+                            delta=None,
+                            delta_color="inverse"
+                        )
+                    
+                    with col2:
+                        st.metric(
+                            "Complexity Level",
+                            complexity['level'],
+                            delta=None
+                        )
+                    
+                    # Display complexity factors
+                    st.markdown("**Complexity Factors:**")
+                    factors = complexity['factors']
+                    factor_df = pd.DataFrame({
+                        'Factor': ['Joins', 'Where Conditions', 'Subqueries', 'Function Calls'],
+                        'Count': [
+                            factors['joins'],
+                            factors['conditions'],
+                            factors['subqueries'],
+                            factors['functions']
+                        ]
+                    })
+                    st.dataframe(factor_df, hide_index=True)
 
                 # 2. Performance Analysis & Optimization
                 if "Performance Analysis" in analysis_options:
