@@ -34,6 +34,7 @@ import time
 from datetime import datetime
 import json
 from typing import Dict
+import statistics
 
 # Page Configuration must be the first Streamlit command
 st.set_page_config(
@@ -400,6 +401,68 @@ def display_query_results():
     
     debug_state("After Displaying Results")
 
+def format_execution_time(microseconds: float) -> str:
+    """Format execution time in appropriate units."""
+    if microseconds >= 1_000_000:  # >= 1 second
+        return f"{microseconds/1_000_000:.2f}s"
+    elif microseconds >= 1_000:  # >= 1 millisecond
+        return f"{microseconds/1_000:.2f}ms"
+    else:
+        return f"{microseconds:.2f}μs"
+
+def measure_query_execution(query: str, connection, num_runs: int = 5) -> dict:
+    """Measure query execution time with multiple runs."""
+    import time
+    import statistics
+    
+    # List to store execution times
+    execution_times = []
+    
+    try:
+        # Warm up the cache with one execution
+        with connection.cursor() as cursor:
+            cursor.execute("EXPLAIN ANALYZE " + query)
+            cursor.fetchall()
+        
+        # Perform multiple runs
+        for _ in range(num_runs):
+            # Clear statement cache before each run
+            with connection.cursor() as cursor:
+                cursor.execute("DEALLOCATE ALL")
+            
+            start_time = time.perf_counter()
+            
+            with connection.cursor() as cursor:
+                cursor.execute("EXPLAIN ANALYZE " + query)
+                cursor.fetchall()
+            
+            end_time = time.perf_counter()
+            execution_time = (end_time - start_time) * 1_000_000  # Convert to microseconds
+            execution_times.append(execution_time)
+        
+        # Calculate statistics
+        median_time = statistics.median(execution_times)
+        min_time = min(execution_times)
+        max_time = max(execution_times)
+        
+        return {
+            "median": median_time,
+            "min": min_time,
+            "max": max_time,
+            "runs": num_runs,
+            "success": True
+        }
+        
+    except Exception as e:
+        return {
+            "median": 0,
+            "min": 0,
+            "max": 0,
+            "runs": 0,
+            "success": False,
+            "error": str(e)
+        }
+
 def run_analysis(query, analysis_options, db_path):
     """Enhanced run_analysis function with enterprise features"""
     debug_state("Starting Analysis")
@@ -530,72 +593,82 @@ def run_analysis(query, analysis_options, db_path):
                         schema_info=st.session_state.get("schema_summary", ""),
                         table_stats=table_stats
                     )
-                    store_analysis_results("performance", optimization_result)
                     
-                    # Check for optimization errors
-                    has_error = (
-                        "error" in optimization_result.get("optimization_reasoning", "").lower() or
-                        any("failed" in w.lower() for w in optimization_result.get("warnings", []))
-                    )
+                    # Execute and measure original query
+                    original_timing = measure_query_execution(query, connection)
                     
-                    if has_error:
-                        st.error("⚠️ Optimization encountered issues:")
-                        st.error(optimization_result["optimization_reasoning"])
-                        
-                        if optimization_result.get("warnings"):
-                            for warning in optimization_result["warnings"]:
-                                st.warning(warning)
-                        
-                        st.info("Showing query with basic formatting:")
-                        st.code(optimization_result["optimized_query"], language="sql")
-                        
-                        # Early return for error cases
+                    if not original_timing["success"]:
+                        st.error("Error measuring original query execution time:")
+                        st.error(original_timing["error"])
                         return
                     
-                    # Store optimized query in session state
-                    st.session_state.optimized_sql = optimization_result["optimized_query"]
+                    # Execute and measure optimized query
+                    optimized_timing = measure_query_execution(
+                        optimization_result["optimized_query"],
+                        connection
+                    )
                     
-                    # Display analysis results
-                    if "analysis" in optimization_result:
-                        with st.expander("🔍 Query Analysis", expanded=True):
-                            analysis = optimization_result["analysis"]
-                            
-                            # Create columns for analysis metrics
-                            col1, col2 = st.columns(2)
-                            
-                            with col1:
-                                st.markdown("**Complexity Analysis:**")
-                                st.info(analysis["complexity"])
-                                
-                                st.markdown("**Data Access Patterns:**")
-                                st.info(analysis["data_access_patterns"])
-                            
-                            with col2:
-                                st.markdown("**Identified Bottlenecks:**")
-                                if analysis["bottlenecks"]:
-                                    for bottleneck in analysis["bottlenecks"]:
-                                        st.warning(f"• {bottleneck}")
-                                else:
-                                    st.success("No major bottlenecks identified")
-                                
-                                st.markdown("**Resource Usage:**")
-                                st.info(analysis["resource_usage"])
+                    if not optimized_timing["success"]:
+                        st.error("Error measuring optimized query execution time:")
+                        st.error(optimized_timing["error"])
+                        return
                     
-                    # Display optimized query with syntax highlighting
-                    st.markdown("#### 🔄 Optimized Query")
+                    # Display query results
+                    with st.expander("🔍 Query Results", expanded=True):
+                        try:
+                            df = pd.read_sql_query(query, connection)
+                            st.dataframe(
+                                df,
+                                use_container_width=True,
+                                hide_index=True
+                            )
+                            st.caption(f"Showing {len(df)} rows")
+                        except Exception as e:
+                            st.error("Error executing query:")
+                            st.error(str(e))
                     
-                    # Format query for display
-                    formatted_query = format_sql_query(optimization_result["optimized_query"])
+                    # Display execution time comparison
+                    st.markdown("#### ⚡ Performance Metrics")
                     
-                    # Create columns for query and copy button
-                    query_col, button_col = st.columns([0.95, 0.05])
-                    with query_col:
-                        st.code(formatted_query, language="sql")
-                    with button_col:
-                        create_copy_button(formatted_query)
+                    # Create columns for timing metrics
+                    col1, col2, col3 = st.columns(3)
                     
-                    # Show optimization details
-                    with st.expander("📊 Optimization Details", expanded=True):
+                    with col1:
+                        st.metric(
+                            label="Original Query Time",
+                            value=format_execution_time(original_timing["median"]),
+                            help=f"Median of {original_timing['runs']} runs"
+                        )
+                        st.caption(f"Range: {format_execution_time(original_timing['min'])} - {format_execution_time(original_timing['max'])}")
+                    
+                    with col2:
+                        st.metric(
+                            label="Optimized Query Time",
+                            value=format_execution_time(optimized_timing["median"]),
+                            help=f"Median of {optimized_timing['runs']} runs"
+                        )
+                        st.caption(f"Range: {format_execution_time(optimized_timing['min'])} - {format_execution_time(optimized_timing['max'])}")
+                    
+                    with col3:
+                        # Calculate improvement percentage
+                        if original_timing["median"] > 0:
+                            improvement = ((original_timing["median"] - optimized_timing["median"]) / original_timing["median"]) * 100
+                            improvement_text = f"{improvement:+.1f}%"
+                            delta_color = "normal" if improvement > 0 else "inverse"
+                        else:
+                            improvement_text = "N/A"
+                            delta_color = "off"
+                        
+                        st.metric(
+                            label="Performance Impact",
+                            value=improvement_text,
+                            delta_color=delta_color,
+                            help="Percentage improvement in execution time"
+                        )
+                        st.caption(f"Based on {optimized_timing['runs']} test runs")
+                    
+                    # Display optimization details
+                    with st.expander("📊 Optimization Analysis", expanded=True):
                         # Show changes made with impact analysis
                         if optimization_result.get("changes_made"):
                             st.markdown("**Changes Made:**")
@@ -612,53 +685,6 @@ def run_analysis(query, analysis_options, db_path):
                             st.markdown("**Validation Steps:**")
                             for step in optimization_result["validation_steps"]:
                                 st.markdown(f"• {step}")
-                    
-                    # Create metrics columns
-                    col1, col2, col3 = st.columns(3)
-                    
-                    with col1:
-                        # Show estimated improvement
-                        improvement = optimization_result.get("estimated_improvement", "0%")
-                        if isinstance(improvement, str) and "%" in improvement:
-                            value = improvement
-                            delta_color = "normal"
-                            if "-" in improvement:
-                                delta_color = "inverse"
-                            st.metric(
-                                label="Estimated Improvement",
-                                value=improvement,
-                                delta_color=delta_color,
-                                help="Estimated performance improvement"
-                            )
-                    
-                    with col2:
-                        # Show confidence level with color indicator
-                        confidence = optimization_result.get("confidence", "low")
-                        confidence_color = {
-                            "high": "🟢",
-                            "medium": "🟡",
-                            "low": "🔴"
-                        }.get(confidence.lower(), "⚪")
-                        st.metric(
-                            label="Confidence Level",
-                            value=f"{confidence_color} {confidence.title()}",
-                            help="Confidence in optimization effectiveness"
-                        )
-                    
-                    with col3:
-                        # Show optimization status
-                        if has_error:
-                            st.metric(
-                                label="Status",
-                                value="⚠️ Issues Found",
-                                help="Optimization encountered problems"
-                            )
-                        else:
-                            st.metric(
-                                label="Status",
-                                value="✅ Success",
-                                help="Optimization completed successfully"
-                            )
                     
                     # Show warnings if any
                     if optimization_result.get("warnings"):
