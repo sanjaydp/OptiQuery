@@ -182,49 +182,83 @@ st.markdown("### 📊 Database Connection")
 
 uploaded_file = st.file_uploader("Upload your SQLite Database File", type=["db"])
 if uploaded_file:
-    # Save uploaded database
-    db_path = f"temp_{uploaded_file.name}"
-    with open(db_path, "wb") as f:
-        f.write(uploaded_file.read())
-    
-    # Extract and display schema
-    schema_info = extract_schema_summary(db_path)
-    if schema_info:
-        st.session_state.db_path = db_path
-        st.session_state.schema_summary = schema_info
+    try:
+        # Save uploaded database
+        db_path = f"temp_{uploaded_file.name}"
+        with open(db_path, "wb") as f:
+            f.write(uploaded_file.read())
         
-        # Display database structure
-        st.success("✅ Database uploaded successfully!")
-        st.markdown("#### 📑 Database Schema")
-        for line in schema_info.split('\n'):
-            st.markdown(f"- {line}")
-            
-        # Display sample data for each table
-        st.markdown("#### 📊 Sample Data Preview")
+        # Validate database file
         try:
             conn = sqlite3.connect(db_path)
             cursor = conn.cursor()
-            cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
-            tables = cursor.fetchall()
             
-            for (table_name,) in tables:
-                with st.expander(f"Preview: {table_name}"):
-                    df = pd.read_sql_query(f"SELECT * FROM {table_name} LIMIT 5", conn)
-                    st.dataframe(df)
-                    
-                    # Show table statistics
-                    cursor.execute(f"SELECT COUNT(*) FROM {table_name}")
-                    row_count = cursor.fetchone()[0]
-                    st.markdown(f"Total rows: {row_count:,}")
+            # Check if it's a valid SQLite database
+            cursor.execute("SELECT sqlite_version();")
+            version = cursor.fetchone()
+            if not version:
+                raise Exception("Invalid SQLite database file")
+                
             conn.close()
         except Exception as e:
-            st.error(f"Error previewing data: {str(e)}")
-    else:
-        st.error("❌ Error reading database schema. Please check if the file is a valid SQLite database.")
+            st.error(f"❌ Invalid database file: {str(e)}")
+            if os.path.exists(db_path):
+                os.remove(db_path)
+            st.stop()
+        
+        # Extract and display schema
+        schema_info = extract_schema_summary(db_path)
+        if schema_info:
+            st.session_state.db_path = db_path
+            st.session_state.schema_summary = schema_info
+            
+            # Display database structure
+            st.success("✅ Database uploaded successfully!")
+            st.markdown("#### 📑 Database Schema")
+            for line in schema_info.split('\n'):
+                st.markdown(f"- {line}")
+                
+            # Display sample data for each table
+            st.markdown("#### 📊 Sample Data Preview")
+            try:
+                conn = sqlite3.connect(db_path)
+                cursor = conn.cursor()
+                cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
+                tables = cursor.fetchall()
+                
+                if not tables:
+                    st.warning("⚠️ Database contains no tables")
+                else:
+                    for (table_name,) in tables:
+                        with st.expander(f"Preview: {table_name}"):
+                            try:
+                                df = pd.read_sql_query(f"SELECT * FROM {table_name} LIMIT 5", conn)
+                                st.dataframe(df)
+                                
+                                # Show table statistics
+                                cursor.execute(f"SELECT COUNT(*) FROM {table_name}")
+                                row_count = cursor.fetchone()[0]
+                                st.markdown(f"Total rows: {row_count:,}")
+                            except Exception as e:
+                                st.error(f"Error previewing table {table_name}: {str(e)}")
+                conn.close()
+            except Exception as e:
+                st.error(f"Error previewing data: {str(e)}")
+        else:
+            st.error("❌ Error reading database schema. Please check if the file is a valid SQLite database.")
+            if os.path.exists(db_path):
+                os.remove(db_path)
+    except Exception as e:
+        st.error(f"❌ Error processing database file: {str(e)}")
+        if 'db_path' in locals() and os.path.exists(db_path):
+            os.remove(db_path)
 
 # Query Input Section
 if "db_path" in st.session_state:
     st.markdown("### 📝 SQL Query Input")
+    
+    # Initialize query variable
+    query = ""
     
     # Option to upload SQL file or paste query
     query_input_method = st.radio(
@@ -244,6 +278,7 @@ if "db_path" in st.session_state:
             help="Write your SQL query here. The schema information is shown above for reference."
         )
 
+    # Only show analysis options if we have a query
     if query and query.strip():
         st.session_state.original_query = query
         
@@ -302,6 +337,9 @@ if "db_path" in st.session_state:
                         schema_info=st.session_state.schema_summary,
                         table_stats=table_stats
                     )
+                    
+                    # Store optimized query in session state
+                    st.session_state.optimized_sql = optimization_result["optimized_query"]
                     
                     # Display optimized query
                     st.markdown("**Optimized Query:**")
