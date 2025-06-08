@@ -918,6 +918,112 @@ def format_time(seconds: float) -> str:
     else:
         return f"{seconds:.2f} s"
 
+def show_db_connection_form():
+    """Show database connection settings in the sidebar."""
+    with st.sidebar:
+        st.markdown("### ⚙️ Database Connection")
+        
+        # Database type selection
+        db_type = st.radio(
+            "Select Database Type:",
+            ["SQLite", "PostgreSQL"],
+            index=0 if st.session_state.get('use_sqlite', True) else 1,
+            help="Choose your database type"
+        )
+        
+        st.session_state.use_sqlite = (db_type == "SQLite")
+        
+        if st.session_state.use_sqlite:
+            # SQLite settings
+            sqlite_path = st.text_input(
+                "SQLite Database Path",
+                value=st.session_state.get('sqlite_path', 'optiquery.db'),
+                help="Path to your SQLite database file"
+            )
+            st.session_state.sqlite_path = sqlite_path
+            
+            if st.button("Initialize Sample Database"):
+                with st.spinner("Initializing database..."):
+                    initialize_sqlite_database()
+                    st.session_state.schema_summary = get_schema_summary()
+                    st.session_state.db_initialized = True
+                    st.success("✅ Sample database initialized!")
+                    st.rerun()
+                
+        else:
+            # PostgreSQL settings
+            col1, col2 = st.columns(2)
+            with col1:
+                pg_host = st.text_input(
+                    "Host",
+                    value=st.session_state.get('pg_host', 'localhost'),
+                    help="PostgreSQL host"
+                )
+                pg_database = st.text_input(
+                    "Database",
+                    value=st.session_state.get('pg_database', ''),
+                    help="PostgreSQL database name"
+                )
+                pg_user = st.text_input(
+                    "User",
+                    value=st.session_state.get('pg_user', ''),
+                    help="PostgreSQL username"
+                )
+            
+            with col2:
+                pg_port = st.number_input(
+                    "Port",
+                    value=st.session_state.get('pg_port', 5432),
+                    help="PostgreSQL port"
+                )
+                pg_password = st.text_input(
+                    "Password",
+                    type="password",
+                    value=st.session_state.get('pg_password', ''),
+                    help="PostgreSQL password"
+                )
+            
+            # Store PostgreSQL settings in session state
+            st.session_state.pg_host = pg_host
+            st.session_state.pg_port = pg_port
+            st.session_state.pg_database = pg_database
+            st.session_state.pg_user = pg_user
+            st.session_state.pg_password = pg_password
+            
+            # Test PostgreSQL connection
+            if st.button("Test Connection"):
+                with st.spinner("Testing connection..."):
+                    connection = get_database_connection()
+                    if connection:
+                        try:
+                            cursor = connection.cursor()
+                            cursor.execute("SELECT version();")
+                            version = cursor.fetchone()[0]
+                            st.success(f"✅ Connected to PostgreSQL {version}")
+                            st.session_state.db_initialized = True
+                            st.session_state.schema_summary = get_schema_summary()
+                            cursor.close()
+                            connection.close()
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"❌ Connection error: {str(e)}")
+                            st.session_state.db_initialized = False
+        
+        # OpenAI API key for AI-powered suggestions
+        st.markdown("### 🤖 AI Settings")
+        openai_key = st.text_input(
+            "OpenAI API Key (Optional)",
+            type="password",
+            value=st.session_state.get('openai_api_key', ''),
+            help="Enter your OpenAI API key for AI-powered optimization suggestions"
+        )
+        st.session_state.openai_api_key = openai_key
+        
+        # Show current database schema if available
+        if st.session_state.get('schema_summary') and st.session_state.db_initialized:
+            with st.expander("📚 Database Schema", expanded=False):
+                st.text(st.session_state.schema_summary)
+
 def main():
     st.title("OptiQuery: SQL Optimizer Assistant")
     
@@ -1073,9 +1179,11 @@ AND order_total > 1000;"""
 
 if __name__ == "__main__":
     # Initialize session state
+    if 'db_initialized' not in st.session_state:
+        st.session_state.db_initialized = False
     if 'query_history' not in st.session_state:
         st.session_state.query_history = []
     if 'query' not in st.session_state:
-        st.session_state.query = None
+        st.session_state.query = ""
         
     main()
