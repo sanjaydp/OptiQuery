@@ -14,6 +14,7 @@ import plotly.express as px
 import pandas as pd
 import sqlite3
 from openai import OpenAI
+import re
 
 # Initialize session state
 if "optimized_sql" not in st.session_state:
@@ -86,9 +87,14 @@ def run_analysis(query, analysis_options, db_path):
                 cursor.execute(f"PRAGMA table_info({table_name})")
                 columns = cursor.fetchall()
                 
+                # Get existing indexes
+                cursor.execute(f"SELECT name, sql FROM sqlite_master WHERE type='index' AND tbl_name='{table_name}'")
+                indexes = cursor.fetchall()
+                
                 table_stats[table_name] = {
                     "row_count": row_count,
-                    "columns": [col[1] for col in columns]
+                    "columns": [col[1] for col in columns],
+                    "indexes": {idx[0]: idx[1] for idx in indexes}
                 }
             conn.close()
         except Exception as e:
@@ -189,6 +195,104 @@ def run_analysis(query, analysis_options, db_path):
                 label="Estimated Performance Improvement",
                 value=optimization_result["estimated_improvement"]
             )
+
+        # 3. Index Recommendations
+        if "Index Recommendations" in analysis_options:
+            st.markdown("#### 📊 Index Analysis")
+            
+            try:
+                # Get existing indexes
+                existing_indexes = {}
+                for table, stats in table_stats.items():
+                    if "indexes" in stats:
+                        existing_indexes[table] = stats["indexes"]
+                
+                st.markdown("**Current Indexes:**")
+                if existing_indexes:
+                    for table, indexes in existing_indexes.items():
+                        st.markdown(f"*Table: {table}*")
+                        for idx_name, idx_sql in indexes.items():
+                            st.code(idx_sql, language="sql")
+                else:
+                    st.info("No existing indexes found")
+                
+                # Analyze query for potential indexes
+                st.markdown("**Recommended Indexes:**")
+                with st.spinner("Analyzing for index recommendations..."):
+                    # Extract tables and columns from the query
+                    tables_in_query = re.findall(r"FROM\s+(\w+)|JOIN\s+(\w+)", query, re.IGNORECASE)
+                    tables_in_query = [t[0] or t[1] for t in tables_in_query if t[0] or t[1]]
+                    
+                    # Extract WHERE conditions
+                    where_conditions = re.findall(r"WHERE\s+(\w+\.\w+|\w+)\s*[=<>]", query, re.IGNORECASE)
+                    
+                    # Extract JOIN conditions
+                    join_conditions = re.findall(r"ON\s+(\w+\.\w+)\s*=\s*(\w+\.\w+)", query, re.IGNORECASE)
+                    
+                    recommended_indexes = []
+                    
+                    # Recommend indexes for WHERE conditions
+                    for cond in where_conditions:
+                        if "." in cond:
+                            table, column = cond.split(".")
+                            if table in tables_in_query:
+                                recommended_indexes.append(f"CREATE INDEX idx_{table}_{column} ON {table}({column});")
+                    
+                    # Recommend indexes for JOIN conditions
+                    for left, right in join_conditions:
+                        left_table, left_col = left.split(".")
+                        right_table, right_col = right.split(".")
+                        if left_table in tables_in_query:
+                            recommended_indexes.append(f"CREATE INDEX idx_{left_table}_{left_col} ON {left_table}({left_col});")
+                        if right_table in tables_in_query:
+                            recommended_indexes.append(f"CREATE INDEX idx_{right_table}_{right_col} ON {right_table}({right_col});")
+                    
+                    if recommended_indexes:
+                        for idx in recommended_indexes:
+                            st.code(idx, language="sql")
+                    else:
+                        st.info("No additional indexes recommended")
+            except Exception as e:
+                st.error(f"Error analyzing indexes: {str(e)}")
+
+        # 4. Query Plan
+        if "Query Plan" in analysis_options:
+            st.markdown("#### 📈 Query Execution Plan")
+            
+            try:
+                with st.spinner("Analyzing query execution plan..."):
+                    # Execute EXPLAIN QUERY PLAN
+                    conn = sqlite3.connect(db_path)
+                    cursor = conn.cursor()
+                    cursor.execute(f"EXPLAIN QUERY PLAN {query}")
+                    plan_rows = cursor.fetchall()
+                    conn.close()
+                    
+                    if plan_rows:
+                        # Create a DataFrame for the execution plan
+                        plan_df = pd.DataFrame(plan_rows, columns=['id', 'parent', 'notused', 'detail'])
+                        st.dataframe(plan_df, hide_index=True)
+                        
+                        # Add explanation of the query plan
+                        st.markdown("**Plan Analysis:**")
+                        
+                        # Look for full table scans
+                        full_scans = [row for row in plan_rows if 'SCAN TABLE' in row[3] and 'SEARCH TABLE' not in row[3]]
+                        if full_scans:
+                            st.warning("⚠️ Query contains full table scan(s):")
+                            for scan in full_scans:
+                                st.markdown(f"- {scan[3]}")
+                        
+                        # Look for index usage
+                        index_usage = [row for row in plan_rows if 'SEARCH' in row[3] or 'INDEX' in row[3]]
+                        if index_usage:
+                            st.success("✅ Query uses indexes:")
+                            for idx in index_usage:
+                                st.markdown(f"- {idx[3]}")
+                    else:
+                        st.warning("No execution plan available for this query")
+            except Exception as e:
+                st.error(f"Error analyzing query plan: {str(e)}")
 
         progress_bar.progress(100)
         st.success("✅ Analysis Complete!")
