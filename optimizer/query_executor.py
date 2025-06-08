@@ -1,4 +1,5 @@
 import sqlite3  # or your preferred database module
+import time  # Add missing time import
 
 def execute_query(db_path, query):
     conn = None  # ✅ Ensure it's defined before try block
