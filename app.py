@@ -910,10 +910,6 @@ Provide a clear, concise answer focusing on the specific question. If relevant, 
 
 # Main app code
 def main():
-    st.title("🧠 OptiQuery: SQL Optimizer Assistant")
-    
-    # Rest of your existing UI code...
-    
     # Render chat assistant at the end
     render_chat_assistant()
     
