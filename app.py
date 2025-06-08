@@ -462,294 +462,172 @@ def format_execution_time(microseconds: float) -> str:
     else:
         return f"{microseconds:.2f}μs"
 
-def measure_query_execution(query: str, connection, num_runs: int = 5) -> dict:
-    """Measure query execution time with multiple runs."""
-    import time
-    import statistics
-    
-    # List to store execution times
+def measure_query_execution_time(connection, query: str, runs: int = 5) -> list:
+    """Measure query execution time over multiple runs."""
     execution_times = []
     
+    cursor = connection.cursor()
     try:
         # Warm up the cache with one execution
-        with connection.cursor() as cursor:
-            cursor.execute("EXPLAIN ANALYZE " + query)
-            cursor.fetchall()
+        cursor.execute("EXPLAIN " + query)
+        cursor.fetchall()
         
         # Perform multiple runs
-        for _ in range(num_runs):
-            # Clear statement cache before each run
-            with connection.cursor() as cursor:
-                cursor.execute("DEALLOCATE ALL")
-            
+        for _ in range(runs):
             start_time = time.perf_counter()
             
-            with connection.cursor() as cursor:
-                cursor.execute("EXPLAIN ANALYZE " + query)
-                cursor.fetchall()
+            cursor.execute(query)
+            cursor.fetchall()  # Ensure query is fully executed
             
             end_time = time.perf_counter()
-            execution_time = (end_time - start_time) * 1_000_000  # Convert to microseconds
+            execution_time = end_time - start_time
             execution_times.append(execution_time)
-        
-        # Calculate statistics
-        median_time = statistics.median(execution_times)
-        min_time = min(execution_times)
-        max_time = max(execution_times)
-        
-        return {
-            "median": median_time,
-            "min": min_time,
-            "max": max_time,
-            "runs": num_runs,
-            "success": True
-        }
-        
+            
     except Exception as e:
-        return {
-            "median": 0,
-            "min": 0,
-            "max": 0,
-            "runs": 0,
-            "success": False,
-            "error": str(e)
-        }
+        st.error(f"Error executing query: {str(e)}")
+        return []
+    finally:
+        cursor.close()
+        
+    return execution_times
 
-def get_database_connection():
-    """Get a database connection with proper error handling."""
+def get_query_plan(connection, query: str) -> str:
+    """Get the query execution plan."""
+    cursor = connection.cursor()
     try:
-        # Check if using SQLite
-        if st.session_state.get('use_sqlite', True):  # Default to SQLite if no preference
-            db_path = st.session_state.get('sqlite_path')
-            if not db_path:
-                st.error("⚠️ SQLite database path not configured.")
-                return None
-            return sqlite3.connect(db_path)
-        
-        # Try PostgreSQL connection if selected
-        if HAS_POSTGRES:
-            # Get connection parameters from session state or environment
-            db_params = st.session_state.get('db_params', {})
-            if not db_params:
-                st.error("⚠️ Database connection not configured. Please set up your database connection first.")
-                return None
-                
-            # Create connection
-            connection = psycopg2.connect(
-                host=db_params.get('host', 'localhost'),
-                port=db_params.get('port', 5432),
-                database=db_params.get('database'),
-                user=db_params.get('user'),
-                password=db_params.get('password')
-            )
-            
-            return connection
+        if st.session_state.get('use_sqlite', True):
+            cursor.execute(f"EXPLAIN QUERY PLAN {query}")
         else:
-            st.error("⚠️ PostgreSQL support not available. Please use SQLite instead.")
-            return None
-            
+            cursor.execute(f"EXPLAIN (FORMAT JSON) {query}")
+        
+        plan = cursor.fetchall()
+        return str(plan)
     except Exception as e:
-        st.error("❌ Database connection error:")
-        st.error(str(e))
-        return None
+        st.error(f"Error getting query plan: {str(e)}")
+        return "Could not get query plan"
+    finally:
+        cursor.close()
 
-def run_analysis(query, analysis_options, db_path):
-    """Enhanced run_analysis function with enterprise features"""
-    
-    # Initialize progress
-    progress_bar = st.progress(0)
-    progress_bar.progress(10)
-    
+def optimize_query(query: str) -> str:
+    """Get optimization suggestions for the query."""
     try:
         # Get database connection
         connection = get_database_connection()
         if not connection:
-            return
-        
-        # Ensure connection is closed after use
-        with connection:
-            # Get table statistics if available
-            table_stats = {}
+            return "Could not connect to database"
+            
+        try:
+            # Get query plan
+            plan = get_query_plan(connection, query)
+            
+            # Measure original query performance
+            original_times = measure_query_execution_time(connection, query)
+            if not original_times:
+                return "Could not measure query performance"
+            
+            # Calculate statistics
+            median_time = statistics.median(original_times)
+            min_time = min(original_times)
+            max_time = max(original_times)
+            
+            # Format execution time with appropriate units
+            def format_time(seconds):
+                if seconds < 0.000001:  # Less than 1 microsecond
+                    return f"{seconds * 1000000000:.2f} ns"
+                elif seconds < 0.001:  # Less than 1 millisecond
+                    return f"{seconds * 1000000:.2f} μs"
+                elif seconds < 1:  # Less than 1 second
+                    return f"{seconds * 1000:.2f} ms"
+                else:
+                    return f"{seconds:.2f} s"
+            
+            # Prepare optimization context
+            context = {
+                "query": query,
+                "execution_plan": plan,
+                "median_time": format_time(median_time),
+                "min_time": format_time(min_time),
+                "max_time": format_time(max_time),
+                "run_count": len(original_times)
+            }
+            
+            # Get schema information
+            cursor = connection.cursor()
             try:
-                with connection.cursor() as cursor:
-                    # Get table row counts
-                    cursor.execute("""
-                        SELECT 
-                            schemaname || '.' || tablename as table_name,
-                            n_live_tup as row_count
-                        FROM pg_stat_user_tables
-                    """)
-                    for table_name, row_count in cursor.fetchall():
-                        table_stats[table_name] = {"row_count": row_count}
+                if st.session_state.get('use_sqlite', True):
+                    cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
+                    tables = cursor.fetchall()
                     
-                    # Get index information
-                    cursor.execute("""
-                        SELECT
-                            schemaname || '.' || tablename as table_name,
-                            indexname,
-                            indexdef
-                        FROM pg_indexes
-                        WHERE schemaname NOT IN ('pg_catalog', 'information_schema')
-                    """)
-                    for table_name, index_name, index_def in cursor.fetchall():
-                        if table_name in table_stats:
-                            if "indexes" not in table_stats[table_name]:
-                                table_stats[table_name]["indexes"] = {}
-                            table_stats[table_name]["indexes"][index_name] = index_def
-                    
-                    # Get column information
+                    schema_info = []
+                    for (table_name,) in tables:
+                        cursor.execute(f"PRAGMA table_info({table_name})")
+                        columns = cursor.fetchall()
+                        schema_info.append(f"Table: {table_name}")
+                        schema_info.append(f"Columns: {', '.join(f'{col[1]} ({col[2]})' for col in columns)}")
+                        schema_info.append("")
+                else:
                     cursor.execute("""
                         SELECT 
                             table_schema || '.' || table_name as table_name,
-                            string_agg(column_name, ', ' ORDER BY ordinal_position) as columns
+                            string_agg(column_name || ' ' || data_type, ', ' ORDER BY ordinal_position) as columns
                         FROM information_schema.columns
                         WHERE table_schema NOT IN ('pg_catalog', 'information_schema')
                         GROUP BY table_schema, table_name
                     """)
+                    schema_info = []
                     for table_name, columns in cursor.fetchall():
-                        if table_name in table_stats:
-                            table_stats[table_name]["columns"] = columns.split(", ")
-            except Exception as e:
-                st.warning(f"⚠️ Could not fetch complete table statistics: {str(e)}")
-            
-            progress_bar.progress(30)
-            
-            # Performance Analysis & Optimization
-            if "Performance Analysis" in analysis_options:
-                st.markdown("#### 🚀 Query Optimization")
+                        schema_info.append(f"Table: {table_name}")
+                        schema_info.append(f"Columns: {columns}")
+                        schema_info.append("")
                 
-                try:
-                    # Get optimization suggestions
-                    optimization_result = optimize_query(
-                        query,
-                        schema_info=st.session_state.get("schema_summary", ""),
-                        table_stats=table_stats
-                    )
-                    
-                    # Execute and measure original query
-                    original_timing = measure_query_execution(query, connection)
-                    
-                    if not original_timing["success"]:
-                        st.error("Error measuring original query execution time:")
-                        st.error(original_timing["error"])
-                        return
-                    
-                    # Execute and measure optimized query
-                    optimized_timing = measure_query_execution(
-                        optimization_result["optimized_query"],
-                        connection
-                    )
-                    
-                    if not optimized_timing["success"]:
-                        st.error("Error measuring optimized query execution time:")
-                        st.error(optimized_timing["error"])
-                        return
-                    
-                    # Display query results
-                    with st.expander("🔍 Query Results", expanded=True):
-                        try:
-                            df = pd.read_sql_query(query, connection)
-                            st.dataframe(
-                                df,
-                                use_container_width=True,
-                                hide_index=True
-                            )
-                            st.caption(f"Showing {len(df)} rows")
-                        except Exception as e:
-                            st.error("Error executing query:")
-                            st.error(str(e))
-                    
-                    # Display execution time comparison
-                    st.markdown("#### ⚡ Performance Metrics")
-                    
-                    # Create columns for timing metrics
-                    col1, col2, col3 = st.columns(3)
-                    
-                    with col1:
-                        st.metric(
-                            label="Original Query Time",
-                            value=format_execution_time(original_timing["median"]),
-                            help=f"Median of {original_timing['runs']} runs"
-                        )
-                        st.caption(f"Range: {format_execution_time(original_timing['min'])} - {format_execution_time(original_timing['max'])}")
-                    
-                    with col2:
-                        st.metric(
-                            label="Optimized Query Time",
-                            value=format_execution_time(optimized_timing["median"]),
-                            help=f"Median of {optimized_timing['runs']} runs"
-                        )
-                        st.caption(f"Range: {format_execution_time(optimized_timing['min'])} - {format_execution_time(optimized_timing['max'])}")
-                    
-                    with col3:
-                        # Calculate improvement percentage
-                        if original_timing["median"] > 0:
-                            improvement = ((original_timing["median"] - optimized_timing["median"]) / original_timing["median"]) * 100
-                            improvement_text = f"{improvement:+.1f}%"
-                            delta_color = "normal" if improvement > 0 else "inverse"
-                        else:
-                            improvement_text = "N/A"
-                            delta_color = "off"
-                        
-                        st.metric(
-                            label="Performance Impact",
-                            value=improvement_text,
-                            delta_color=delta_color,
-                            help="Percentage improvement in execution time"
-                        )
-                        st.caption(f"Based on {optimized_timing['runs']} test runs")
-                    
-                    # Display optimization details
-                    with st.expander("📊 Optimization Analysis", expanded=True):
-                        # Show changes made with impact analysis
-                        if optimization_result.get("changes_made"):
-                            st.markdown("**Changes Made:**")
-                            for change in optimization_result["changes_made"]:
-                                st.markdown(f"• {change}")
-                        
-                        # Show optimization reasoning
-                        if optimization_result.get("optimization_reasoning"):
-                            st.markdown("**Optimization Reasoning:**")
-                            st.info(optimization_result["optimization_reasoning"])
-                        
-                        # Show validation steps
-                        if optimization_result.get("validation_steps"):
-                            st.markdown("**Validation Steps:**")
-                            for step in optimization_result["validation_steps"]:
-                                st.markdown(f"• {step}")
-                    
-                    # Show warnings if any
-                    if optimization_result.get("warnings"):
-                        st.markdown("**⚠️ Important Considerations:**")
-                        for warning in optimization_result["warnings"]:
-                            st.warning(warning)
-                    
-                    # Show index suggestions
-                    if optimization_result.get("index_suggestions"):
-                        with st.expander("📈 Index Recommendations", expanded=False):
-                            st.markdown("The following indexes may improve query performance:")
-                            for suggestion in optimization_result["index_suggestions"]:
-                                st.code(format_sql_for_display(suggestion), language="sql")
-                                
-                except Exception as e:
-                    st.error("❌ An error occurred during optimization:")
-                    st.error(str(e))
-                    st.info("Original query with basic formatting:")
-                    st.code(format_sql_for_display(query), language="sql")
+                context["schema"] = "\n".join(schema_info)
+            finally:
+                cursor.close()
             
-            progress_bar.progress(90)
+            # Get optimization suggestions from OpenAI
+            optimization_prompt = f"""
+            As a SQL optimization expert, analyze this query and its execution metrics:
             
-            # Generate final report
-            report = generate_report(query, analysis_options)
-            progress_bar.progress(100)
+            Original Query:
+            {query}
             
-            return report
+            Execution Plan:
+            {plan}
+            
+            Performance Metrics:
+            - Median Time: {context['median_time']}
+            - Min Time: {context['min_time']}
+            - Max Time: {context['max_time']}
+            - Number of Runs: {context['run_count']}
+            
+            Schema Information:
+            {context.get('schema', 'No schema information available')}
+            
+            Please provide:
+            1. Analysis of the current query performance
+            2. Specific optimization suggestions
+            3. An optimized version of the query
+            4. Expected performance impact of the optimizations
+            
+            Focus on practical improvements that will have the most significant impact on performance.
+            """
+            
+            response = openai.ChatCompletion.create(
+                model="gpt-4-turbo-preview",
+                messages=[
+                    {"role": "system", "content": "You are a SQL optimization expert. Provide clear, practical advice for query optimization."},
+                    {"role": "user", "content": optimization_prompt}
+                ],
+                temperature=0.7
+            )
+            
+            return response.choices[0].message.content
+            
+        finally:
+            connection.close()
             
     except Exception as e:
-        st.error("❌ An error occurred during analysis:")
-        st.error(str(e))
-        progress_bar.progress(100)
-        return None
+        return f"Error during optimization: {str(e)}"
 
 def generate_comprehensive_report(query: str, analysis_results: Dict) -> str:
     """Generate a comprehensive analysis report"""
