@@ -1208,24 +1208,78 @@ def show_db_connection_form():
 
 # Main app code
 def main():
-    # Render chat assistant at the end
-    render_chat_assistant()
+    st.title("OptiQuery: SQL Optimizer Assistant")
     
-    # Footer
-    st.markdown("---")
-    st.markdown("📦 [View Source Code on GitHub](https://github.com/sanjaydp/optiquery)")
+    # Show database connection form in sidebar
+    show_db_connection_form()
     
-    # Add Query History View in Sidebar
-    with st.sidebar:
-        if st.session_state.query_history:
-            st.markdown("## 📜 Query History")
-            for idx, hist in enumerate(st.session_state.query_history):
-                with st.expander(f"Query {idx + 1} - {hist['timestamp']}"):
-                    st.code(hist['query'], language="sql")
-                    if "benchmark_results" in hist:
-                        st.markdown("**Performance:**")
-                        st.markdown(f"- Execution Time: {hist['benchmark_results'].get('average_execution_time', 'N/A')}s")
-                        st.markdown(f"- Result Size: {hist['benchmark_results'].get('result_set_size', 'N/A')} rows")
+    # Main query input area
+    st.markdown("### 🔍 Query Optimization")
+    
+    # Query input with syntax highlighting
+    query = st.text_area(
+        "Enter your SQL query:",
+        height=150,
+        help="Paste your SQL query here for optimization analysis"
+    )
+    
+    # Only show optimization button if we have a query
+    if query:
+        col1, col2 = st.columns([1, 4])
+        with col1:
+            run_optimization = st.button("Optimize Query", type="primary")
+            
+        if run_optimization:
+            with st.spinner("Analyzing query..."):
+                try:
+                    # Get optimization suggestions
+                    optimization_result = optimize_query(query)
+                    
+                    # Display optimization results
+                    st.markdown("### 📊 Optimization Analysis")
+                    st.markdown(optimization_result)
+                    
+                    # Show current database schema
+                    if st.session_state.get('schema_summary'):
+                        with st.expander("📚 Database Schema", expanded=False):
+                            st.text(st.session_state.schema_summary)
+                    
+                    # Try to execute the query and show results
+                    connection = get_database_connection()
+                    if connection:
+                        try:
+                            cursor = connection.cursor()
+                            try:
+                                cursor.execute(query)
+                                results = cursor.fetchall()
+                                
+                                # Get column names
+                                if st.session_state.get('use_sqlite', True):
+                                    columns = [description[0] for description in cursor.description]
+                                else:
+                                    columns = [desc.name for desc in cursor.description]
+                                
+                                # Convert to DataFrame
+                                df = pd.DataFrame(results, columns=columns)
+                                
+                                # Show results
+                                with st.expander("🔍 Query Results", expanded=True):
+                                    st.dataframe(
+                                        df,
+                                        use_container_width=True,
+                                        hide_index=True
+                                    )
+                                    st.caption(f"Showing {len(df)} rows")
+                            finally:
+                                cursor.close()
+                        except Exception as e:
+                            st.error(f"Error executing query: {str(e)}")
+                        finally:
+                            connection.close()
+                            
+                except Exception as e:
+                    st.error("❌ Error during optimization:")
+                    st.error(str(e))
 
 if __name__ == "__main__":
     main()
