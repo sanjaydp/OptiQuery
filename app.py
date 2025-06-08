@@ -8,7 +8,7 @@ from optimizer.query_executor import execute_query
 from optimizer.line_commenter import add_inline_comments
 from optimizer.cost_estimator import estimate_query_cost
 from optimizer.auto_fixer import apply_auto_fixes
-from optimizer.complexity_analyzer import calculate_query_complexity  # NEW
+from optimizer.complexity_analyzer import calculate_query_complexity
 import os
 import plotly.express as px
 import pandas as pd
@@ -331,8 +331,15 @@ if uploaded_file:
     except Exception as e:
         st.error(f"❌ Error processing database file: {str(e)}")
 
-# Move the analysis function to a separate function for better organization
 def run_analysis(query, analysis_options, db_path):
+    """
+    Run the selected analysis options on the given query.
+    
+    Args:
+        query (str): The SQL query to analyze
+        analysis_options (list): List of selected analysis types
+        db_path (str): Path to the SQLite database file
+    """
     with st.spinner("🔍 Analyzing your query..."):
         progress_bar = st.progress(0)
         
@@ -359,13 +366,11 @@ def run_analysis(query, analysis_options, db_path):
             conn.close()
         except Exception as e:
             st.error(f"Error collecting table statistics: {str(e)}")
+            return
 
-        # Show progress
-        progress_bar.progress(20)
-        
         # 1. Syntax Check
         if "Syntax Check" in analysis_options:
-            progress_bar.progress(40)
+            progress_bar.progress(20)
             st.markdown("#### 📝 Query Analysis")
             analysis_result = analyze_sql(query)
             
@@ -386,6 +391,8 @@ def run_analysis(query, analysis_options, db_path):
                 st.markdown("**💡 Optimization Suggestions:**")
                 for suggestion in suggestions:
                     st.info(suggestion)
+            
+            progress_bar.progress(40)
             
             # Display complexity analysis
             if complexity:
@@ -423,46 +430,8 @@ def run_analysis(query, analysis_options, db_path):
                         ]
                     })
                     st.dataframe(factor_df, hide_index=True)
-
+            
             progress_bar.progress(60)
-            
-            # Display complexity analysis
-            complexity = analysis_result["complexity"]
-            st.markdown("**🔍 Query Complexity Analysis:**")
-            
-            # Create three columns for metrics
-            col1, col2, col3 = st.columns(3)
-            
-            with col1:
-                st.metric(
-                    "Complexity Score",
-                    f"{complexity['score']}/100",
-                    delta=None,
-                    delta_color="inverse"
-                )
-            
-            with col2:
-                st.metric(
-                    "Complexity Level",
-                    complexity['level'],
-                    delta=None
-                )
-            
-            # Display complexity factors
-            st.markdown("**Complexity Factors:**")
-            factors = complexity['factors']
-            factor_df = pd.DataFrame({
-                'Factor': ['Joins', 'Where Conditions', 'Subqueries', 'Function Calls'],
-                'Count': [
-                    factors['joins'],
-                    factors['conditions'],
-                    factors['subqueries'],
-                    factors['functions']
-                ]
-            })
-            st.dataframe(factor_df, hide_index=True)
-            
-            progress_bar.progress(80)
 
         # 2. Performance Analysis & Optimization
         if "Performance Analysis" in analysis_options:
@@ -471,11 +440,11 @@ def run_analysis(query, analysis_options, db_path):
             # Get optimization suggestions
             optimization_result = optimize_query(
                 query,
-                schema_info=st.session_state.schema_summary,
+                schema_info=st.session_state.get("schema_summary", ""),
                 table_stats=table_stats
             )
             
-            progress_bar.progress(100)
+            progress_bar.progress(80)
             
             # Store optimized query in session state
             st.session_state.optimized_sql = optimization_result["optimized_query"]
