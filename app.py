@@ -908,13 +908,11 @@ def analyze_query(query: str, run_syntax_check: bool = True, run_performance: bo
         return False
 
 def format_time(seconds: float) -> str:
-    """Format time in appropriate units."""
-    if seconds < 0.000001:  # Less than 1 microsecond
-        return f"{seconds * 1000000000:.2f} ns"
-    elif seconds < 0.001:  # Less than 1 millisecond
-        return f"{seconds * 1000000:.2f} μs"
-    elif seconds < 1:  # Less than 1 second
-        return f"{seconds * 1000:.2f} ms"
+    """Format time in seconds to a human-readable string."""
+    if seconds < 0.001:
+        return f"{seconds*1000000:.2f} μs"
+    elif seconds < 1:
+        return f"{seconds*1000:.2f} ms"
     else:
         return f"{seconds:.2f} s"
 
