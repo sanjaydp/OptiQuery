@@ -870,15 +870,50 @@ def analyze_query(query: str, run_syntax_check: bool = True, run_performance: bo
                             median_time = statistics.median(execution_times)
                             performance_metrics['median_time'] = format_time(median_time)
                         
-                        # Get result size
+                        # Get result size and handle duplicate column names
                         cursor.execute(query)
                         results = cursor.fetchall()
                         performance_metrics['row_count'] = len(results)
                         
-                        # Get column names for display
+                        # Get column names and handle duplicates
                         if st.session_state.get('use_sqlite', True):
-                            columns = [description[0] for description in cursor.description]
+                            # For SQLite, get table info from the query plan
+                            cursor.execute(f"EXPLAIN QUERY PLAN {query}")
+                            plan = cursor.fetchall()
+                            tables = {}
+                            for row in plan:
+                                if 'SCAN' in row[3]:
+                                    table_name = row[3].split()[-1].strip('[]')
+                                    tables[table_name] = True
+                            
+                            # Get column descriptions
+                            cursor.execute(query)
+                            descriptions = cursor.description
+                            columns = []
+                            seen_columns = set()
+                            
+                            for desc in descriptions:
+                                col_name = desc[0]
+                                if col_name in seen_columns:
+                                    # If duplicate, try to find the table name
+                                    for table in tables:
+                                        qualified_name = f"{table}.{col_name}"
+                                        if qualified_name not in seen_columns:
+                                            columns.append(qualified_name)
+                                            seen_columns.add(qualified_name)
+                                            break
+                                    else:
+                                        # If no table found, append with a unique suffix
+                                        suffix = 1
+                                        while f"{col_name}_{suffix}" in seen_columns:
+                                            suffix += 1
+                                        columns.append(f"{col_name}_{suffix}")
+                                        seen_columns.add(f"{col_name}_{suffix}")
+                                else:
+                                    columns.append(col_name)
+                                    seen_columns.add(col_name)
                         else:
+                            # For PostgreSQL, column names already include table names
                             columns = [desc.name for desc in cursor.description]
                         
                         # Show results
