@@ -531,6 +531,15 @@ def run_analysis(query, analysis_options, db_path):
                 )
                 store_analysis_results("performance", optimization_result)
                 
+                # Check for optimization errors
+                if "error" in optimization_result.get("optimization_reasoning", "").lower():
+                    st.error("⚠️ Error during optimization:")
+                    st.error(optimization_result["optimization_reasoning"])
+                    if optimization_result.get("warnings"):
+                        for warning in optimization_result["warnings"]:
+                            st.warning(warning)
+                    st.info("Showing original query with basic formatting:")
+                
                 # Store optimized query in session state
                 st.session_state.optimized_sql = optimization_result["optimized_query"]
                 
@@ -557,21 +566,32 @@ def run_analysis(query, analysis_options, db_path):
                         st.markdown("**Resource Usage:**")
                         st.info(analysis["resource_usage"])
                 
-                # Display optimized query
+                # Display optimized query with syntax highlighting
                 st.markdown("**Optimized Query:**")
-                st.code(optimization_result["optimized_query"], language="sql")
+                formatted_query = optimization_result["optimized_query"]
+                
+                # Add copy button for the query
+                col1, col2 = st.columns([0.9, 0.1])
+                with col1:
+                    st.code(formatted_query, language="sql")
+                with col2:
+                    if st.button("📋", help="Copy query to clipboard"):
+                        st.session_state.clipboard = formatted_query
+                        st.success("Query copied!")
                 
                 # Show optimization reasoning
-                st.markdown("**Optimization Details:**")
-                st.info(optimization_result["optimization_reasoning"])
+                if not "error" in optimization_result.get("optimization_reasoning", "").lower():
+                    st.markdown("**Optimization Details:**")
+                    st.info(optimization_result["optimization_reasoning"])
                 
                 # Show changes made with impact analysis
-                st.markdown("**Changes Made:**")
-                for change in optimization_result["changes_made"]:
-                    st.markdown(f"• {change}")
+                if optimization_result.get("changes_made"):
+                    st.markdown("**Changes Made:**")
+                    for change in optimization_result["changes_made"]:
+                        st.markdown(f"• {change}")
                 
                 # Show validation steps
-                if "validation_steps" in optimization_result:
+                if optimization_result.get("validation_steps"):
                     st.markdown("**Validation Steps:**")
                     for step in optimization_result["validation_steps"]:
                         st.markdown(f"• {step}")
@@ -581,11 +601,13 @@ def run_analysis(query, analysis_options, db_path):
                 
                 with col1:
                     # Show estimated improvement
-                    st.metric(
-                        label="Estimated Performance Improvement",
-                        value=optimization_result["estimated_improvement"],
-                        help="Conservative estimate based on analysis"
-                    )
+                    improvement = optimization_result["estimated_improvement"]
+                    if isinstance(improvement, str) and "%" in improvement:
+                        st.metric(
+                            label="Estimated Performance Improvement",
+                            value=improvement,
+                            help="Conservative estimate based on analysis"
+                        )
                 
                 with col2:
                     # Show confidence level with explanation
