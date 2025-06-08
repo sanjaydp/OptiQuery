@@ -9,12 +9,31 @@ from optimizer.line_commenter import add_inline_comments
 from optimizer.cost_estimator import estimate_query_cost
 from optimizer.auto_fixer import apply_auto_fixes
 from optimizer.complexity_analyzer import calculate_query_complexity
+from optimizer.enterprise_features import (
+    analyze_enterprise_features,
+    display_enterprise_analysis,
+    add_enterprise_sidebar
+)
+from optimizer.advanced_analysis import QueryAnalyzer
+from config import (
+    ANALYSIS_SETTINGS,
+    SECURITY_SETTINGS,
+    PERFORMANCE_SETTINGS,
+    DATA_QUALITY_SETTINGS,
+    BEST_PRACTICES,
+    QUERY_CATEGORIES,
+    OPTIMIZATION_STRATEGIES
+)
 import os
 import plotly.express as px
 import pandas as pd
 import sqlite3
 from openai import OpenAI
 import re
+import time
+from datetime import datetime
+import json
+from typing import Dict
 
 # Initialize session state
 if "optimized_sql" not in st.session_state:
@@ -29,6 +48,20 @@ if "complexity_score" not in st.session_state:
     st.session_state.complexity_score = 0
 if "complexity_label" not in st.session_state:
     st.session_state.complexity_label = ""
+if "query_history" not in st.session_state:
+    st.session_state.query_history = []
+if "benchmark_results" not in st.session_state:
+    st.session_state.benchmark_results = {}
+if "saved_queries" not in st.session_state:
+    st.session_state.saved_queries = {}
+if "current_schema_version" not in st.session_state:
+    st.session_state.current_schema_version = None
+if "query_category" not in st.session_state:
+    st.session_state.query_category = "operational"
+if "optimization_strategy" not in st.session_state:
+    st.session_state.optimization_strategy = "balanced"
+if "advanced_settings" not in st.session_state:
+    st.session_state.advanced_settings = {}
 
 def extract_schema_summary(db_path):
     """Create a string summary of all tables and columns for LLM context."""
@@ -59,243 +92,423 @@ def nl_to_sql(natural_language: str):
     )
     return response.choices[0].message.content.strip()
 
-def run_analysis(query, analysis_options, db_path):
-    """
-    Run the selected analysis options on the given query.
+def analyze_security_risks(query):
+    """Analyze query for security risks and best practices."""
+    risks = []
     
-    Args:
-        query (str): The SQL query to analyze
-        analysis_options (list): List of selected analysis types
-        db_path (str): Path to the SQLite database file
-    """
+    # Check for SQL injection vulnerabilities
+    if "EXECUTE" in query.upper() or "EXEC" in query.upper():
+        risks.append("⚠️ Dynamic SQL execution detected - potential SQL injection risk")
+    
+    # Check for sensitive data exposure
+    sensitive_patterns = ["password", "credit_card", "ssn", "secret", "token"]
+    for pattern in sensitive_patterns:
+        if pattern in query.lower():
+            risks.append(f"⚠️ Possible sensitive data exposure: {pattern}")
+    
+    # Check for proper schema usage
+    if "information_schema" in query.lower():
+        risks.append("⚠️ Direct information_schema access - consider using proper access controls")
+    
+    return risks
+
+def analyze_data_quality(query, db_path):
+    """Analyze potential data quality impacts."""
+    impacts = []
+    
+    # Check for NULL handling
+    if "IS NULL" not in query.upper() and "IS NOT NULL" not in query.upper():
+        impacts.append("⚠️ No NULL checks found - consider handling NULL values")
+    
+    # Check for data truncation risks
+    if "CAST" in query.upper() or "CONVERT" in query.upper():
+        impacts.append("⚠️ Type conversion detected - verify no data truncation risks")
+    
+    # Check for proper JOIN conditions
+    if "JOIN" in query.upper() and "ON" not in query.upper():
+        impacts.append("⚠️ JOIN without ON clause - risk of cartesian product")
+    
+    return impacts
+
+def benchmark_query(query, db_path):
+    """Run query benchmarks with different data volumes."""
+    results = {}
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        
+        # Run query multiple times to get average performance
+        iterations = 3
+        total_time = 0
+        
+        for i in range(iterations):
+            start_time = time.time()
+            cursor.execute(query)
+            end_time = time.time()
+            total_time += (end_time - start_time)
+        
+        avg_time = total_time / iterations
+        
+        # Get result set size
+        cursor.execute(query)
+        result_count = len(cursor.fetchall())
+        
+        # Get estimated rows processed
+        cursor.execute(f"EXPLAIN QUERY PLAN {query}")
+        plan = cursor.fetchall()
+        estimated_rows = sum([int(row[3].split()[-1]) for row in plan if 'SCAN' in row[3]])
+        
+        results = {
+            "average_execution_time": avg_time,
+            "result_set_size": result_count,
+            "estimated_rows_processed": estimated_rows,
+            "iterations": iterations
+        }
+        
+        conn.close()
+    except Exception as e:
+        results = {"error": str(e)}
+    
+    return results
+
+def generate_documentation(query, analysis_results):
+    """Generate comprehensive query documentation."""
+    doc = "# Query Documentation\n\n"
+    
+    # Basic Information
+    doc += "## Overview\n"
+    doc += f"```sql\n{query}\n```\n\n"
+    
+    # Purpose and Usage
+    doc += "## Purpose\n"
+    doc += "This query is designed to...\n\n"
+    
+    # Performance Characteristics
+    doc += "## Performance Characteristics\n"
+    if "complexity" in analysis_results:
+        doc += f"- Complexity Score: {analysis_results['complexity'].get('score', 'N/A')}/100\n"
+        doc += f"- Complexity Level: {analysis_results['complexity'].get('level', 'N/A')}\n"
+    
+    # Dependencies
+    doc += "\n## Dependencies\n"
+    tables = re.findall(r"FROM\s+(\w+)|JOIN\s+(\w+)", query, re.IGNORECASE)
+    doc += "### Tables:\n"
+    for table in tables:
+        doc += f"- {table[0] or table[1]}\n"
+    
+    # Security Considerations
+    doc += "\n## Security Considerations\n"
+    security_risks = analyze_security_risks(query)
+    for risk in security_risks:
+        doc += f"- {risk}\n"
+    
+    return doc
+
+def run_analysis(query, analysis_options, db_path):
+    """Enhanced run_analysis function with enterprise features"""
     with st.spinner("🔍 Analyzing your query..."):
         progress_bar = st.progress(0)
         
-        # Collect table statistics
-        table_stats = {}
+        # Store original query
+        st.session_state.original_query = query
+        
         try:
-            conn = sqlite3.connect(db_path)
-            cursor = conn.cursor()
-            cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
-            tables = cursor.fetchall()
+            # Run enterprise analysis first
+            enterprise_results = analyze_enterprise_features(query)
+            display_enterprise_analysis(query, enterprise_results)
+            progress_bar.progress(30)
             
-            for (table_name,) in tables:
-                cursor.execute(f"SELECT COUNT(*) FROM {table_name}")
-                row_count = cursor.fetchone()[0]
+            # Collect table statistics
+            table_stats = {}
+            try:
+                conn = sqlite3.connect(db_path)
+                cursor = conn.cursor()
+                cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
+                tables = cursor.fetchall()
                 
-                # Get column statistics
-                cursor.execute(f"PRAGMA table_info({table_name})")
-                columns = cursor.fetchall()
+                for (table_name,) in tables:
+                    cursor.execute(f"SELECT COUNT(*) FROM {table_name}")
+                    row_count = cursor.fetchone()[0]
+                    
+                    # Get column statistics
+                    cursor.execute(f"PRAGMA table_info({table_name})")
+                    columns = cursor.fetchall()
+                    
+                    # Get existing indexes
+                    cursor.execute(f"SELECT name, sql FROM sqlite_master WHERE type='index' AND tbl_name='{table_name}'")
+                    indexes = cursor.fetchall()
+                    
+                    table_stats[table_name] = {
+                        "row_count": row_count,
+                        "columns": [col[1] for col in columns],
+                        "indexes": {idx[0]: idx[1] for idx in indexes}
+                    }
+                conn.close()
+            except Exception as e:
+                st.error(f"Error collecting table statistics: {str(e)}")
+                return
+            
+            progress_bar.progress(50)
+            
+            # Run selected analysis options
+            if "Syntax Check" in analysis_options:
+                st.markdown("#### 📝 Query Analysis")
+                analysis_result = analyze_sql(query)
                 
-                # Get existing indexes
-                cursor.execute(f"SELECT name, sql FROM sqlite_master WHERE type='index' AND tbl_name='{table_name}'")
-                indexes = cursor.fetchall()
+                # Display issues
+                issues = analysis_result.get("issues", [])
+                suggestions = analysis_result.get("suggestions", [])
+                complexity = analysis_result.get("complexity", {})
                 
-                table_stats[table_name] = {
-                    "row_count": row_count,
-                    "columns": [col[1] for col in columns],
-                    "indexes": {idx[0]: idx[1] for idx in indexes}
-                }
-            conn.close()
+                if issues:
+                    st.markdown("**⚠️ Potential Issues:**")
+                    for issue in issues:
+                        st.warning(issue)
+                else:
+                    st.success("✅ No major issues found")
+                
+                # Display suggestions
+                if suggestions:
+                    st.markdown("**💡 Optimization Suggestions:**")
+                    for suggestion in suggestions:
+                        st.info(suggestion)
+                
+                # Display complexity analysis
+                if complexity:
+                    st.markdown("**🔍 Query Complexity Analysis:**")
+                    
+                    # Create three columns for metrics
+                    col1, col2, col3 = st.columns(3)
+                    
+                    with col1:
+                        st.metric(
+                            "Complexity Score",
+                            f"{complexity.get('score', 0)}/100",
+                            delta=None,
+                            delta_color="inverse"
+                        )
+                    
+                    with col2:
+                        st.metric(
+                            "Complexity Level",
+                            complexity.get('level', 'N/A'),
+                            delta=None
+                        )
+                    
+                    # Display complexity factors
+                    if 'factors' in complexity:
+                        st.markdown("**Complexity Factors:**")
+                        factors = complexity['factors']
+                        factor_df = pd.DataFrame({
+                            'Factor': ['Joins', 'Where Conditions', 'Subqueries', 'Function Calls'],
+                            'Count': [
+                                factors.get('joins', 0),
+                                factors.get('conditions', 0),
+                                factors.get('subqueries', 0),
+                                factors.get('functions', 0)
+                            ]
+                        })
+                        st.dataframe(factor_df, hide_index=True)
+            
+            progress_bar.progress(70)
+            
+            # Performance Analysis & Optimization
+            if "Performance Analysis" in analysis_options:
+                st.markdown("#### 🚀 Query Optimization")
+                
+                # Get optimization suggestions
+                optimization_result = optimize_query(
+                    query,
+                    schema_info=st.session_state.get("schema_summary", ""),
+                    table_stats=table_stats
+                )
+                
+                # Store optimized query in session state
+                st.session_state.optimized_sql = optimization_result["optimized_query"]
+                
+                # Display optimized query
+                st.markdown("**Optimized Query:**")
+                st.code(optimization_result["optimized_query"], language="sql")
+                
+                # Show optimization reasoning
+                st.markdown("**Optimization Details:**")
+                st.info(optimization_result["optimization_reasoning"])
+                
+                # Show estimated improvement
+                st.metric(
+                    label="Estimated Performance Improvement",
+                    value=optimization_result["estimated_improvement"]
+                )
+            
+            progress_bar.progress(90)
+            
+            # Index Recommendations
+            if "Index Recommendations" in analysis_options:
+                st.markdown("#### 📊 Index Analysis")
+                
+                try:
+                    # Get existing indexes
+                    existing_indexes = {}
+                    for table, stats in table_stats.items():
+                        if "indexes" in stats:
+                            existing_indexes[table] = stats["indexes"]
+                    
+                    st.markdown("**Current Indexes:**")
+                    if existing_indexes:
+                        for table, indexes in existing_indexes.items():
+                            st.markdown(f"*Table: {table}*")
+                            for idx_name, idx_sql in indexes.items():
+                                st.code(idx_sql, language="sql")
+                    else:
+                        st.info("No existing indexes found")
+                    
+                    # Analyze query for potential indexes
+                    st.markdown("**Recommended Indexes:**")
+                    with st.spinner("Analyzing for index recommendations..."):
+                        # Extract tables and columns from the query
+                        tables_in_query = re.findall(r"FROM\s+(\w+)|JOIN\s+(\w+)", query, re.IGNORECASE)
+                        tables_in_query = [t[0] or t[1] for t in tables_in_query if t[0] or t[1]]
+                        
+                        # Extract WHERE conditions
+                        where_conditions = re.findall(r"WHERE\s+(\w+\.\w+|\w+)\s*[=<>]", query, re.IGNORECASE)
+                        
+                        # Extract JOIN conditions
+                        join_conditions = re.findall(r"ON\s+(\w+\.\w+)\s*=\s*(\w+\.\w+)", query, re.IGNORECASE)
+                        
+                        recommended_indexes = []
+                        
+                        # Recommend indexes for WHERE conditions
+                        for cond in where_conditions:
+                            if "." in cond:
+                                table, column = cond.split(".")
+                                if table in tables_in_query:
+                                    recommended_indexes.append(f"CREATE INDEX idx_{table}_{column} ON {table}({column});")
+                        
+                        # Recommend indexes for JOIN conditions
+                        for left, right in join_conditions:
+                            left_table, left_col = left.split(".")
+                            right_table, right_col = right.split(".")
+                            if left_table in tables_in_query:
+                                recommended_indexes.append(f"CREATE INDEX idx_{left_table}_{left_col} ON {left_table}({left_col});")
+                            if right_table in tables_in_query:
+                                recommended_indexes.append(f"CREATE INDEX idx_{right_table}_{right_col} ON {right_table}({right_col});")
+                        
+                        if recommended_indexes:
+                            for idx in recommended_indexes:
+                                st.code(idx, language="sql")
+                        else:
+                            st.info("No additional indexes recommended")
+                except Exception as e:
+                    st.error(f"Error analyzing indexes: {str(e)}")
+            
+            # Query Plan
+            if "Query Plan" in analysis_options:
+                st.markdown("#### 📈 Query Execution Plan")
+                
+                try:
+                    with st.spinner("Analyzing query execution plan..."):
+                        # Execute EXPLAIN QUERY PLAN
+                        conn = sqlite3.connect(db_path)
+                        cursor = conn.cursor()
+                        cursor.execute(f"EXPLAIN QUERY PLAN {query}")
+                        plan_rows = cursor.fetchall()
+                        conn.close()
+                        
+                        if plan_rows:
+                            # Create a DataFrame for the execution plan
+                            plan_df = pd.DataFrame(plan_rows, columns=['id', 'parent', 'notused', 'detail'])
+                            st.dataframe(plan_df, hide_index=True)
+                            
+                            # Add explanation of the query plan
+                            st.markdown("**Plan Analysis:**")
+                            
+                            # Look for full table scans
+                            full_scans = [row for row in plan_rows if 'SCAN TABLE' in row[3] and 'SEARCH TABLE' not in row[3]]
+                            if full_scans:
+                                st.warning("⚠️ Query contains full table scan(s):")
+                                for scan in full_scans:
+                                    st.markdown(f"- {scan[3]}")
+                            
+                            # Look for index usage
+                            index_usage = [row for row in plan_rows if 'SEARCH' in row[3] or 'INDEX' in row[3]]
+                            if index_usage:
+                                st.success("✅ Query uses indexes:")
+                                for idx in index_usage:
+                                    st.markdown(f"- {idx[3]}")
+                        else:
+                            st.warning("No execution plan available for this query")
+                except Exception as e:
+                    st.error(f"Error analyzing query plan: {str(e)}")
+            
+            progress_bar.progress(100)
+            st.success("✅ Analysis Complete!")
+            
         except Exception as e:
-            st.error(f"Error collecting table statistics: {str(e)}")
+            st.error(f"Error during analysis: {str(e)}")
             return
 
-        # 1. Syntax Check
-        if "Syntax Check" in analysis_options:
-            progress_bar.progress(20)
-            st.markdown("#### 📝 Query Analysis")
-            analysis_result = analyze_sql(query)
-            
-            # Display issues
-            issues = analysis_result.get("issues", [])
-            suggestions = analysis_result.get("suggestions", [])
-            complexity = analysis_result.get("complexity", {})
-            
-            if issues:
-                st.markdown("**⚠️ Potential Issues:**")
-                for issue in issues:
-                    st.warning(issue)
-            else:
-                st.success("✅ No major issues found")
-            
-            # Display suggestions
-            if suggestions:
-                st.markdown("**💡 Optimization Suggestions:**")
-                for suggestion in suggestions:
-                    st.info(suggestion)
-            
-            progress_bar.progress(40)
-            
-            # Display complexity analysis
-            if complexity:
-                st.markdown("**🔍 Query Complexity Analysis:**")
-                
-                # Create three columns for metrics
-                col1, col2, col3 = st.columns(3)
-                
-                with col1:
-                    st.metric(
-                        "Complexity Score",
-                        f"{complexity.get('score', 0)}/100",
-                        delta=None,
-                        delta_color="inverse"
-                    )
-                
-                with col2:
-                    st.metric(
-                        "Complexity Level",
-                        complexity.get('level', 'N/A'),
-                        delta=None
-                    )
-                
-                # Display complexity factors
-                if 'factors' in complexity:
-                    st.markdown("**Complexity Factors:**")
-                    factors = complexity['factors']
-                    factor_df = pd.DataFrame({
-                        'Factor': ['Joins', 'Where Conditions', 'Subqueries', 'Function Calls'],
-                        'Count': [
-                            factors.get('joins', 0),
-                            factors.get('conditions', 0),
-                            factors.get('subqueries', 0),
-                            factors.get('functions', 0)
-                        ]
-                    })
-                    st.dataframe(factor_df, hide_index=True)
-            
-            progress_bar.progress(60)
+def generate_comprehensive_report(query: str, analysis_results: Dict) -> str:
+    """Generate a comprehensive analysis report"""
+    report = f"""# SQL Query Analysis Report
+Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 
-        # 2. Performance Analysis & Optimization
-        if "Performance Analysis" in analysis_options:
-            st.markdown("#### 🚀 Query Optimization")
-            
-            # Get optimization suggestions
-            optimization_result = optimize_query(
-                query,
-                schema_info=st.session_state.get("schema_summary", ""),
-                table_stats=table_stats
-            )
-            
-            progress_bar.progress(80)
-            
-            # Store optimized query in session state
-            st.session_state.optimized_sql = optimization_result["optimized_query"]
-            
-            # Display optimized query
-            st.markdown("**Optimized Query:**")
-            st.code(optimization_result["optimized_query"], language="sql")
-            
-            # Show optimization reasoning
-            st.markdown("**Optimization Details:**")
-            st.info(optimization_result["optimization_reasoning"])
-            
-            # Show estimated improvement
-            st.metric(
-                label="Estimated Performance Improvement",
-                value=optimization_result["estimated_improvement"]
-            )
+## Query Overview
+```sql
+{query}
+```
 
-        # 3. Index Recommendations
-        if "Index Recommendations" in analysis_options:
-            st.markdown("#### 📊 Index Analysis")
-            
-            try:
-                # Get existing indexes
-                existing_indexes = {}
-                for table, stats in table_stats.items():
-                    if "indexes" in stats:
-                        existing_indexes[table] = stats["indexes"]
-                
-                st.markdown("**Current Indexes:**")
-                if existing_indexes:
-                    for table, indexes in existing_indexes.items():
-                        st.markdown(f"*Table: {table}*")
-                        for idx_name, idx_sql in indexes.items():
-                            st.code(idx_sql, language="sql")
-                else:
-                    st.info("No existing indexes found")
-                
-                # Analyze query for potential indexes
-                st.markdown("**Recommended Indexes:**")
-                with st.spinner("Analyzing for index recommendations..."):
-                    # Extract tables and columns from the query
-                    tables_in_query = re.findall(r"FROM\s+(\w+)|JOIN\s+(\w+)", query, re.IGNORECASE)
-                    tables_in_query = [t[0] or t[1] for t in tables_in_query if t[0] or t[1]]
-                    
-                    # Extract WHERE conditions
-                    where_conditions = re.findall(r"WHERE\s+(\w+\.\w+|\w+)\s*[=<>]", query, re.IGNORECASE)
-                    
-                    # Extract JOIN conditions
-                    join_conditions = re.findall(r"ON\s+(\w+\.\w+)\s*=\s*(\w+\.\w+)", query, re.IGNORECASE)
-                    
-                    recommended_indexes = []
-                    
-                    # Recommend indexes for WHERE conditions
-                    for cond in where_conditions:
-                        if "." in cond:
-                            table, column = cond.split(".")
-                            if table in tables_in_query:
-                                recommended_indexes.append(f"CREATE INDEX idx_{table}_{column} ON {table}({column});")
-                    
-                    # Recommend indexes for JOIN conditions
-                    for left, right in join_conditions:
-                        left_table, left_col = left.split(".")
-                        right_table, right_col = right.split(".")
-                        if left_table in tables_in_query:
-                            recommended_indexes.append(f"CREATE INDEX idx_{left_table}_{left_col} ON {left_table}({left_col});")
-                        if right_table in tables_in_query:
-                            recommended_indexes.append(f"CREATE INDEX idx_{right_table}_{right_col} ON {right_table}({right_col});")
-                    
-                    if recommended_indexes:
-                        for idx in recommended_indexes:
-                            st.code(idx, language="sql")
-                    else:
-                        st.info("No additional indexes recommended")
-            except Exception as e:
-                st.error(f"Error analyzing indexes: {str(e)}")
+## Analysis Summary
+- Complexity Score: {analysis_results['complexity']['score']}/100
+- Security Risk Level: {analysis_results['security']['risk_level'].upper()}
+- Optimization Priority: {analysis_results['optimization_plan']['priority'].upper()}
 
-        # 4. Query Plan
-        if "Query Plan" in analysis_options:
-            st.markdown("#### 📈 Query Execution Plan")
-            
-            try:
-                with st.spinner("Analyzing query execution plan..."):
-                    # Execute EXPLAIN QUERY PLAN
-                    conn = sqlite3.connect(db_path)
-                    cursor = conn.cursor()
-                    cursor.execute(f"EXPLAIN QUERY PLAN {query}")
-                    plan_rows = cursor.fetchall()
-                    conn.close()
-                    
-                    if plan_rows:
-                        # Create a DataFrame for the execution plan
-                        plan_df = pd.DataFrame(plan_rows, columns=['id', 'parent', 'notused', 'detail'])
-                        st.dataframe(plan_df, hide_index=True)
-                        
-                        # Add explanation of the query plan
-                        st.markdown("**Plan Analysis:**")
-                        
-                        # Look for full table scans
-                        full_scans = [row for row in plan_rows if 'SCAN TABLE' in row[3] and 'SEARCH TABLE' not in row[3]]
-                        if full_scans:
-                            st.warning("⚠️ Query contains full table scan(s):")
-                            for scan in full_scans:
-                                st.markdown(f"- {scan[3]}")
-                        
-                        # Look for index usage
-                        index_usage = [row for row in plan_rows if 'SEARCH' in row[3] or 'INDEX' in row[3]]
-                        if index_usage:
-                            st.success("✅ Query uses indexes:")
-                            for idx in index_usage:
-                                st.markdown(f"- {idx[3]}")
-                    else:
-                        st.warning("No execution plan available for this query")
-            except Exception as e:
-                st.error(f"Error analyzing query plan: {str(e)}")
+## Detailed Analysis
 
-        progress_bar.progress(100)
-        st.success("✅ Analysis Complete!")
+### 1. Complexity Analysis
+- Score: {analysis_results['complexity']['score']}/100
+- Level: {analysis_results['complexity']['level']}
+
+Factors:
+{json.dumps(analysis_results['complexity']['factors'], indent=2)}
+
+Recommendations:
+{chr(10).join(f"- {rec}" for rec in analysis_results['complexity']['recommendations'])}
+
+### 2. Security Analysis
+Risk Level: {analysis_results['security']['risk_level'].upper()}
+
+Vulnerabilities:
+{chr(10).join(f"- {vuln}" for vuln in analysis_results['security']['vulnerabilities'])}
+
+Recommendations:
+{chr(10).join(f"- {rec}" for rec in analysis_results['security']['recommendations'])}
+
+### 3. Performance Analysis
+Issues:
+{chr(10).join(f"- {issue}" for issue in analysis_results['performance']['issues'])}
+
+Recommendations:
+{chr(10).join(f"- {rec}" for rec in analysis_results['performance']['recommendations'])}
+
+Estimated Impact: {analysis_results['performance']['estimated_impact']}
+
+### 4. Data Quality Analysis
+Issues:
+{chr(10).join(f"- {issue}" for issue in analysis_results['quality']['issues'])}
+
+Recommendations:
+{chr(10).join(f"- {rec}" for rec in analysis_results['quality']['recommendations'])}
+
+## Optimization Plan
+Priority: {analysis_results['optimization_plan']['priority'].upper()}
+
+Recommended Optimizations:
+{chr(10).join(f"- {opt}" for opt in analysis_results['optimization_plan']['optimizations'])}
+
+Expected Improvements:
+{json.dumps(analysis_results['optimization_plan']['estimated_improvement'], indent=2)}
+"""
+    return report
 
 # Page Configuration
 st.set_page_config(
@@ -329,6 +542,37 @@ st.markdown("""
 
 # Title
 st.markdown("<h1 style='color:#4B8BBE;'>🧠 OptiQuery: SQL Optimizer Assistant</h1>", unsafe_allow_html=True)
+
+# Add this after the title section
+with st.sidebar:
+    st.markdown("## ⚙️ Analysis Settings")
+    
+    # Query Category Selection
+    st.session_state.query_category = st.selectbox(
+        "Query Category",
+        list(QUERY_CATEGORIES.keys()),
+        help="Select the type of query you're optimizing"
+    )
+    
+    # Optimization Strategy
+    st.session_state.optimization_strategy = st.selectbox(
+        "Optimization Strategy",
+        ["balanced", "performance", "readability", "security"],
+        help="Choose optimization priority"
+    )
+    
+    # Advanced Settings
+    with st.expander("🔧 Advanced Settings"):
+        st.session_state.advanced_settings = {
+            "benchmark_iterations": st.slider("Benchmark Iterations", 1, 10, 3),
+            "security_level": st.select_slider(
+                "Security Level",
+                ["low", "medium", "high"],
+                value="medium"
+            ),
+            "enable_ai_suggestions": st.checkbox("Enable AI Suggestions", True),
+            "show_query_metrics": st.checkbox("Show Query Metrics", True)
+        }
 
 # Natural Language to SQL Section
 st.markdown("### 🗣️ Convert Natural Language to SQL Query")
@@ -527,3 +771,15 @@ Provide a clear, concise answer focusing on the specific question. If relevant, 
 # Footer
 st.markdown("---")
 st.markdown("📦 [View Source Code on GitHub](https://github.com/sanjaydp/optiquery)")
+
+# Add Query History View in Sidebar
+with st.sidebar:
+    if st.session_state.query_history:
+        st.markdown("## 📜 Query History")
+        for idx, hist in enumerate(st.session_state.query_history):
+            with st.expander(f"Query {idx + 1} - {hist['timestamp']}"):
+                st.code(hist['query'], language="sql")
+                if "benchmark_results" in hist:
+                    st.markdown("**Performance:**")
+                    st.markdown(f"- Execution Time: {hist['benchmark_results'].get('average_execution_time', 'N/A')}s")
+                    st.markdown(f"- Result Size: {hist['benchmark_results'].get('result_set_size', 'N/A')} rows")
