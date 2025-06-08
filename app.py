@@ -36,6 +36,8 @@ import json
 from typing import Dict
 import statistics
 import openai
+from database import get_database_connection, measure_query_execution_time
+from optimization import optimize_query
 
 # Try importing PostgreSQL support
 try:
@@ -1247,6 +1249,122 @@ def show_db_connection_form():
                     connection.close()
 
 # Main app code
+def update_query_history(query: str, performance_metrics: dict = None):
+    """Update the query history in session state."""
+    if 'query_history' not in st.session_state:
+        st.session_state.query_history = []
+    
+    # Create history entry
+    history_entry = {
+        'query': query,
+        'timestamp': time.strftime('%Y-%m-%d %H:%M:%S'),
+    }
+    
+    # Add performance metrics if available
+    if performance_metrics:
+        history_entry['performance'] = performance_metrics
+    
+    # Add to history (keep last 10 queries)
+    st.session_state.query_history.insert(0, history_entry)
+    st.session_state.query_history = st.session_state.query_history[:10]
+
+def analyze_query(query: str, run_syntax_check: bool = True, run_performance: bool = True) -> bool:
+    """Analyze and optimize the SQL query."""
+    try:
+        # Syntax check if enabled
+        if run_syntax_check:
+            st.markdown("#### 🔍 Syntax Check")
+            try:
+                connection = get_database_connection()
+                if connection:
+                    try:
+                        cursor = connection.cursor()
+                        try:
+                            # Try parsing the query without executing
+                            if st.session_state.get('use_sqlite', True):
+                                cursor.execute(f"EXPLAIN {query}")
+                            else:
+                                cursor.execute(f"EXPLAIN (FORMAT JSON) {query}")
+                            cursor.fetchall()
+                            st.success("✅ SQL syntax is valid")
+                        finally:
+                            cursor.close()
+                    finally:
+                        connection.close()
+            except Exception as e:
+                st.error("❌ SQL syntax error:")
+                st.error(str(e))
+                return False
+        
+        # Performance analysis if enabled
+        performance_metrics = {}
+        if run_performance:
+            st.markdown("#### 🚀 Performance Analysis")
+            
+            # Get optimization suggestions
+            optimization_result = optimize_query(query)
+            st.markdown(optimization_result)
+            
+            # Collect performance metrics
+            connection = get_database_connection()
+            if connection:
+                try:
+                    cursor = connection.cursor()
+                    try:
+                        # Get execution time
+                        execution_times = measure_query_execution_time(connection, query)
+                        if execution_times:
+                            median_time = statistics.median(execution_times)
+                            performance_metrics['median_time'] = format_time(median_time)
+                        
+                        # Get result size
+                        cursor.execute(query)
+                        results = cursor.fetchall()
+                        performance_metrics['row_count'] = len(results)
+                        
+                        # Get column names for display
+                        if st.session_state.get('use_sqlite', True):
+                            columns = [description[0] for description in cursor.description]
+                        else:
+                            columns = [desc.name for desc in cursor.description]
+                        
+                        # Show results
+                        df = pd.DataFrame(results, columns=columns)
+                        with st.expander("🔍 Query Results", expanded=True):
+                            st.dataframe(
+                                df,
+                                use_container_width=True,
+                                hide_index=True
+                            )
+                            st.caption(f"Showing {len(df)} rows")
+                    finally:
+                        cursor.close()
+                except Exception as e:
+                    st.error(f"Error executing query: {str(e)}")
+                    return False
+                finally:
+                    connection.close()
+        
+        # Update query history
+        update_query_history(query, performance_metrics)
+        return True
+        
+    except Exception as e:
+        st.error("❌ Error during analysis:")
+        st.error(str(e))
+        return False
+
+def format_time(seconds: float) -> str:
+    """Format time in appropriate units."""
+    if seconds < 0.000001:  # Less than 1 microsecond
+        return f"{seconds * 1000000000:.2f} ns"
+    elif seconds < 0.001:  # Less than 1 millisecond
+        return f"{seconds * 1000000:.2f} μs"
+    elif seconds < 1:  # Less than 1 second
+        return f"{seconds * 1000:.2f} ms"
+    else:
+        return f"{seconds:.2f} s"
+
 def main():
     st.title("OptiQuery: SQL Optimizer Assistant")
     
@@ -1256,70 +1374,98 @@ def main():
     # Main query input area
     st.markdown("### 🔍 Query Optimization")
     
-    # Query input with syntax highlighting
-    query = st.text_area(
-        "Enter your SQL query:",
-        height=150,
-        help="Paste your SQL query here for optimization analysis"
+    # Query input method selection
+    query_input_method = st.radio(
+        "Choose input method:",
+        ["Paste SQL Query", "Upload SQL File"],
+        horizontal=True,
+        help="Select how you want to input your SQL query"
     )
+    
+    query = None
+    
+    if query_input_method == "Upload SQL File":
+        uploaded_file = st.file_uploader(
+            "Upload SQL file",
+            type=['sql'],
+            help="Upload a .sql file containing your query"
+        )
+        if uploaded_file:
+            try:
+                query = uploaded_file.getvalue().decode('utf-8')
+                with st.expander("📄 SQL File Contents", expanded=True):
+                    st.code(query, language='sql')
+            except Exception as e:
+                st.error(f"Error reading SQL file: {str(e)}")
+    else:
+        # Sample query template
+        sample_query = """SELECT *
+FROM orders
+WHERE customer_id IN (
+    SELECT customer_id 
+    FROM customers 
+    WHERE region = 'North'
+)
+AND order_date >= '2024-01-01'
+AND order_total > 1000;"""
+        
+        query = st.text_area(
+            "Enter your SQL query:",
+            value=sample_query if not st.session_state.get('query') else st.session_state.get('query'),
+            height=200,
+            help="Paste your SQL query here for optimization analysis"
+        )
+    
+    # Analysis options
+    with st.expander("⚙️ Analysis Options", expanded=False):
+        col1, col2 = st.columns(2)
+        with col1:
+            run_syntax_check = st.checkbox(
+                "Syntax Check",
+                value=True,
+                help="Check SQL syntax before execution"
+            )
+        with col2:
+            run_performance = st.checkbox(
+                "Performance Analysis",
+                value=True,
+                help="Analyze query performance and suggest optimizations"
+            )
     
     # Only show optimization button if we have a query
     if query:
+        # Store query in session state
+        st.session_state.query = query
+        
         col1, col2 = st.columns([1, 4])
         with col1:
-            run_optimization = st.button("Optimize Query", type="primary")
+            run_optimization = st.button(
+                "Analyze & Optimize",
+                type="primary",
+                help="Run selected analysis on the query"
+            )
             
         if run_optimization:
             with st.spinner("Analyzing query..."):
-                try:
-                    # Get optimization suggestions
-                    optimization_result = optimize_query(query)
-                    
-                    # Display optimization results
-                    st.markdown("### 📊 Optimization Analysis")
-                    st.markdown(optimization_result)
-                    
-                    # Show current database schema
-                    if st.session_state.get('schema_summary'):
-                        with st.expander("📚 Database Schema", expanded=False):
-                            st.text(st.session_state.schema_summary)
-                    
-                    # Try to execute the query and show results
-                    connection = get_database_connection()
-                    if connection:
-                        try:
-                            cursor = connection.cursor()
-                            try:
-                                cursor.execute(query)
-                                results = cursor.fetchall()
-                                
-                                # Get column names
-                                if st.session_state.get('use_sqlite', True):
-                                    columns = [description[0] for description in cursor.description]
-                                else:
-                                    columns = [desc.name for desc in cursor.description]
-                                
-                                # Convert to DataFrame
-                                df = pd.DataFrame(results, columns=columns)
-                                
-                                # Show results
-                                with st.expander("🔍 Query Results", expanded=True):
-                                    st.dataframe(
-                                        df,
-                                        use_container_width=True,
-                                        hide_index=True
-                                    )
-                                    st.caption(f"Showing {len(df)} rows")
-                            finally:
-                                cursor.close()
-                        except Exception as e:
-                            st.error(f"Error executing query: {str(e)}")
-                        finally:
-                            connection.close()
-                            
-                except Exception as e:
-                    st.error("❌ Error during optimization:")
-                    st.error(str(e))
+                analyze_query(query, run_syntax_check, run_performance)
+    
+    # Add Query History View in Sidebar
+    with st.sidebar:
+        if st.session_state.get('query_history', []):
+            st.markdown("### 📜 Query History")
+            for idx, hist in enumerate(st.session_state.query_history):
+                with st.expander(f"Query {idx + 1} - {hist['timestamp']}", expanded=False):
+                    st.code(hist['query'], language="sql")
+                    if "performance" in hist:
+                        st.markdown("**Performance:**")
+                        st.markdown(f"- Execution Time: {hist['performance'].get('median_time', 'N/A')}")
+                        st.markdown(f"- Result Size: {hist['performance'].get('row_count', 'N/A')} rows")
 
 if __name__ == "__main__":
+    # Initialize session state
+    if 'query_history' not in st.session_state:
+        st.session_state.query_history = []
+    if 'query' not in st.session_state:
+        st.session_state.query = None
+        
     main()
