@@ -551,49 +551,18 @@ def get_query_plan(connection, query: str) -> str:
         cursor.close()
 
 def optimize_query(query: str) -> str:
-    """Get optimization suggestions for the query."""
+    """Get optimization suggestions for the query using OpenAI."""
     try:
-        # Get database connection
+        if not st.session_state.get('openai_api_key'):
+            return "⚠️ Please provide an OpenAI API key in the sidebar to get AI-powered optimization suggestions."
+        
+        openai.api_key = st.session_state.openai_api_key
+        
+        # Get database schema for context
         connection = get_database_connection()
-        if not connection:
-            return "Could not connect to database"
-            
-        try:
-            # Get query plan
-            plan = get_query_plan(connection, query)
-            
-            # Measure original query performance
-            original_times = measure_query_execution_time(connection, query)
-            if not original_times:
-                return "Could not measure query performance"
-            
-            # Calculate statistics
-            median_time = statistics.median(original_times)
-            min_time = min(original_times)
-            max_time = max(original_times)
-            
-            # Format execution time with appropriate units
-            def format_time(seconds):
-                if seconds < 0.000001:  # Less than 1 microsecond
-                    return f"{seconds * 1000000000:.2f} ns"
-                elif seconds < 0.001:  # Less than 1 millisecond
-                    return f"{seconds * 1000000:.2f} μs"
-                elif seconds < 1:  # Less than 1 second
-                    return f"{seconds * 1000:.2f} ms"
-                else:
-                    return f"{seconds:.2f} s"
-            
-            # Prepare optimization context
-            context = {
-                "query": query,
-                "execution_plan": plan,
-                "median_time": format_time(median_time),
-                "min_time": format_time(min_time),
-                "max_time": format_time(max_time),
-                "run_count": len(original_times)
-            }
-            
-            # Get schema information
+        context = {"schema": ""}
+        
+        if connection:
             cursor = connection.cursor()
             try:
                 if st.session_state.get('use_sqlite', True):
@@ -625,51 +594,42 @@ def optimize_query(query: str) -> str:
                 context["schema"] = "\n".join(schema_info)
             finally:
                 cursor.close()
-            
-            # Get optimization suggestions from OpenAI
-            optimization_prompt = f"""
-            As a SQL optimization expert, analyze this query and its execution metrics:
-            
-            Original Query:
-            {query}
-            
-            Execution Plan:
-            {plan}
-            
-            Performance Metrics:
-            - Median Time: {context['median_time']}
-            - Min Time: {context['min_time']}
-            - Max Time: {context['max_time']}
-            - Number of Runs: {context['run_count']}
-            
-            Schema Information:
-            {context.get('schema', 'No schema information available')}
-            
-            Please provide:
-            1. Analysis of the current query performance
-            2. Specific optimization suggestions
-            3. An optimized version of the query
-            4. Expected performance impact of the optimizations
-            
-            Focus on practical improvements that will have the most significant impact on performance.
-            """
-            
-            response = openai.ChatCompletion.create(
-                model="gpt-4-turbo-preview",
-                messages=[
-                    {"role": "system", "content": "You are a SQL optimization expert. Provide clear, practical advice for query optimization."},
-                    {"role": "user", "content": optimization_prompt}
-                ],
-                temperature=0.7
-            )
-            
-            return response.choices[0].message.content
-            
-        finally:
-            connection.close()
-            
+                connection.close()
+        
+        # Prepare the prompt
+        system_prompt = """You are an expert SQL optimizer. Analyze the given SQL query and provide optimization suggestions.
+Focus on:
+1. Performance improvements
+2. Best practices
+3. Potential issues
+4. Index recommendations
+
+Database Schema:
+{schema}
+
+Provide your response in markdown format with clear sections."""
+
+        user_prompt = f"""Analyze this SQL query for optimization opportunities:
+
+{query}
+
+Please provide specific, actionable recommendations."""
+        
+        # Call OpenAI API with the new client format
+        client = openai.OpenAI(api_key=st.session_state.openai_api_key)
+        response = client.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "system", "content": system_prompt.format(schema=context["schema"])},
+                {"role": "user", "content": user_prompt}
+            ]
+        )
+        
+        # Extract and return the optimization suggestions
+        return response.choices[0].message.content
+        
     except Exception as e:
-        return f"Error during optimization: {str(e)}"
+        return f"❌ Error getting optimization suggestions: {str(e)}"
 
 def generate_comprehensive_report(query: str, analysis_results: Dict) -> str:
     """Generate a comprehensive analysis report"""
@@ -1204,8 +1164,9 @@ AND order_total > 1000;"""
                             # Get schema information for context
                             schema_info = st.session_state.get('schema_summary', '')
                             
-                            # Call OpenAI API
-                            response = openai.ChatCompletion.create(
+                            # Call OpenAI API with the new client format
+                            client = openai.OpenAI(api_key=st.session_state.openai_api_key)
+                            response = client.chat.completions.create(
                                 model="gpt-3.5-turbo",
                                 messages=[
                                     {"role": "system", "content": f"You are a SQL expert. Convert natural language queries to SQL based on this schema:\n{schema_info}"},
