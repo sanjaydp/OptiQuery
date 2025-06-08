@@ -828,7 +828,7 @@ if uploaded_file:
         st.error(f"❌ Error processing database file: {str(e)}")
 
 # Footer and Chat Assistant
-if st.session_state.optimized_sql.strip():
+if st.session_state.get("optimized_sql") and isinstance(st.session_state.optimized_sql, str) and st.session_state.optimized_sql.strip():
     debug_state("Before Chat Assistant")
     
     # Add Chat Assistant in sidebar
@@ -856,26 +856,26 @@ if st.session_state.optimized_sql.strip():
             # Generate context for the AI including full analysis results and query results
             context = f"""
 Analysis Context:
-- Original Query: {st.session_state.original_query}
-- Optimized Query: {st.session_state.optimized_sql}
-- Complexity Score: {st.session_state.complexity_score}
-- Complexity Level: {st.session_state.complexity_label}
-- Identified Issues: {', '.join(st.session_state.issues) if st.session_state.issues else 'None'}
-- Schema: {st.session_state.get('schema_summary', 'Not available')}
+- Original Query: {st.session_state.get("original_query", "")}
+- Optimized Query: {st.session_state.get("optimized_sql", "")}
+- Complexity Score: {st.session_state.get("complexity_score", 0)}
+- Complexity Level: {st.session_state.get("complexity_label", "")}
+- Identified Issues: {', '.join(st.session_state.get("issues", [])) if st.session_state.get("issues") else 'None'}
+- Schema: {st.session_state.get("schema_summary", "Not available")}
 
 Query Results:
 Original Query:
-- Execution Time: {st.session_state.query_results['original']['execution_time']}s
-- Row Count: {st.session_state.query_results['original']['row_count']}
-- Error: {st.session_state.query_results['original']['error']}
+- Execution Time: {st.session_state.query_results["original"].get("execution_time")}s
+- Row Count: {st.session_state.query_results["original"].get("row_count")}
+- Error: {st.session_state.query_results["original"].get("error")}
 
 Optimized Query:
-- Execution Time: {st.session_state.query_results['optimized']['execution_time']}s
-- Row Count: {st.session_state.query_results['optimized']['row_count']}
-- Error: {st.session_state.query_results['optimized']['error']}
+- Execution Time: {st.session_state.query_results["optimized"].get("execution_time")}s
+- Row Count: {st.session_state.query_results["optimized"].get("row_count")}
+- Error: {st.session_state.query_results["optimized"].get("error")}
 
 Analysis Results:
-{json.dumps(st.session_state.analysis_results, indent=2)}
+{json.dumps(st.session_state.get("analysis_results", {}), indent=2)}
 
 User Question: {user_question}
 
