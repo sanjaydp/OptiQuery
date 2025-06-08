@@ -36,56 +36,63 @@ import json
 from typing import Dict
 
 # Initialize session state
-if "optimized_sql" not in st.session_state:
-    st.session_state.optimized_sql = ""
-if "original_query" not in st.session_state:
-    st.session_state.original_query = ""
-if "explanation" not in st.session_state:
-    st.session_state.explanation = ""
-if "issues" not in st.session_state:
-    st.session_state.issues = []
-if "complexity_score" not in st.session_state:
-    st.session_state.complexity_score = 0
-if "complexity_label" not in st.session_state:
-    st.session_state.complexity_label = ""
-if "query_history" not in st.session_state:
-    st.session_state.query_history = []
-if "benchmark_results" not in st.session_state:
-    st.session_state.benchmark_results = {}
-if "saved_queries" not in st.session_state:
-    st.session_state.saved_queries = {}
-if "current_schema_version" not in st.session_state:
-    st.session_state.current_schema_version = None
-if "query_category" not in st.session_state:
-    st.session_state.query_category = "operational"
-if "optimization_strategy" not in st.session_state:
-    st.session_state.optimization_strategy = "balanced"
-if "advanced_settings" not in st.session_state:
-    st.session_state.advanced_settings = {}
-if "chat_history" not in st.session_state:
-    st.session_state.chat_history = []
-if "analysis_results" not in st.session_state:
-    st.session_state.analysis_results = {
-        "syntax": {},
-        "performance": {},
-        "index_recommendations": {},
-        "query_plan": {}
-    }
-if "query_results" not in st.session_state:
-    st.session_state.query_results = {
-        "original": {
-            "data": None,
-            "execution_time": None,
-            "row_count": None,
-            "error": None
-        },
-        "optimized": {
-            "data": None,
-            "execution_time": None,
-            "row_count": None,
-            "error": None
+if "debug" not in st.session_state:
+    st.session_state.debug = True  # Enable debugging
+
+def init_session_state():
+    """Initialize all session state variables in one place"""
+    if "initialized" not in st.session_state:
+        state_vars = {
+            "optimized_sql": "",
+            "original_query": "",
+            "explanation": "",
+            "issues": [],
+            "complexity_score": 0,
+            "complexity_label": "",
+            "query_history": [],
+            "benchmark_results": {},
+            "saved_queries": {},
+            "current_schema_version": None,
+            "query_category": "operational",
+            "optimization_strategy": "balanced",
+            "advanced_settings": {},
+            "chat_history": [],
+            "analysis_results": {
+                "syntax": {},
+                "performance": {},
+                "index_recommendations": {},
+                "query_plan": {}
+            },
+            "query_results": {
+                "original": {
+                    "data": None,
+                    "execution_time": None,
+                    "row_count": None,
+                    "error": None
+                },
+                "optimized": {
+                    "data": None,
+                    "execution_time": None,
+                    "row_count": None,
+                    "error": None
+                }
+            },
+            "last_analysis_id": None,  # Track the last analysis
+            "initialized": True
         }
-    }
+        
+        for key, value in state_vars.items():
+            if key not in st.session_state:
+                st.session_state[key] = value
+
+def debug_state(location: str):
+    """Print debug information about the session state"""
+    if st.session_state.debug:
+        st.sidebar.markdown(f"### 🔍 Debug Info: {location}")
+        st.sidebar.write("Session State Keys:", list(st.session_state.keys()))
+        st.sidebar.write("Has Query Results:", bool(st.session_state.query_results["original"]["data"] or st.session_state.query_results["optimized"]["data"]))
+        st.sidebar.write("Analysis Results Keys:", list(st.session_state.analysis_results.keys()))
+        st.sidebar.write("Last Analysis ID:", st.session_state.last_analysis_id)
 
 def extract_schema_summary(db_path):
     """Create a string summary of all tables and columns for LLM context."""
@@ -235,7 +242,11 @@ def store_analysis_results(analysis_type: str, results: dict):
     st.session_state.analysis_results[analysis_type] = results
 
 def store_query_results(result_type: str, results: dict):
-    """Store query results in session state"""
+    """Store query results in session state with debugging"""
+    if st.session_state.debug:
+        st.sidebar.markdown(f"### 💾 Storing {result_type} Query Results")
+        st.sidebar.write("Results:", results)
+    
     if results["success"]:
         st.session_state.query_results[result_type] = {
             "data": results["rows"],
@@ -250,9 +261,14 @@ def store_query_results(result_type: str, results: dict):
             "row_count": None,
             "error": results.get("error", "Unknown error occurred")
         }
+    
+    # Force Streamlit to recognize the state change
+    st.session_state.last_analysis_id = datetime.now().isoformat()
 
 def display_query_results():
-    """Display query results and comparison"""
+    """Display query results and comparison with debugging"""
+    debug_state("Before Displaying Results")
+    
     if st.session_state.query_results["original"]["data"] is not None:
         st.markdown("#### 📊 Original Query Results")
         st.dataframe(pd.DataFrame(st.session_state.query_results["original"]["data"]))
@@ -276,9 +292,13 @@ def display_query_results():
                 delta=f"{improvement:.1f}%",
                 delta_color="inverse"
             )
+    
+    debug_state("After Displaying Results")
 
 def run_analysis(query, analysis_options, db_path):
     """Enhanced run_analysis function with enterprise features"""
+    debug_state("Starting Analysis")
+    
     with st.spinner("🔍 Analyzing your query..."):
         progress_bar = st.progress(0)
         
@@ -289,6 +309,7 @@ def run_analysis(query, analysis_options, db_path):
             # Execute original query and store results
             original_results = execute_query(db_path, query)
             store_query_results("original", original_results)
+            debug_state("After Original Query")
             
             # Run enterprise analysis first
             enterprise_results = analyze_enterprise_features(query)
@@ -529,12 +550,15 @@ def run_analysis(query, analysis_options, db_path):
             if st.session_state.optimized_sql:
                 optimized_results = execute_query(db_path, st.session_state.optimized_sql)
                 store_query_results("optimized", optimized_results)
+                debug_state("After Optimized Query")
             
             # Display results
             display_query_results()
             
         except Exception as e:
             st.error(f"Error during analysis: {str(e)}")
+            if st.session_state.debug:
+                st.exception(e)
             return
 
 def generate_comprehensive_report(query: str, analysis_results: Dict) -> str:
@@ -805,6 +829,8 @@ if uploaded_file:
 
 # Footer and Chat Assistant
 if st.session_state.optimized_sql.strip():
+    debug_state("Before Chat Assistant")
+    
     # Add Chat Assistant in sidebar
     with st.sidebar:
         st.markdown("## 💬 Ask OptiQuery Assistant")
@@ -820,6 +846,8 @@ if st.session_state.optimized_sql.strip():
         user_question = st.chat_input("Ask about the query...")
         
         if user_question:
+            debug_state("Processing User Question")
+            
             # Add user message to chat
             with st.chat_message("user"):
                 st.markdown(user_question)
@@ -868,6 +896,8 @@ Provide a clear, concise answer focusing on the specific question. If relevant, 
                     answer = response.choices[0].message.content.strip()
                     st.markdown(answer)
                     st.session_state.chat_history.append({"role": "assistant", "content": answer})
+            
+            debug_state("After Processing User Question")
 
 # Footer
 st.markdown("---")
@@ -884,3 +914,7 @@ with st.sidebar:
                     st.markdown("**Performance:**")
                     st.markdown(f"- Execution Time: {hist['benchmark_results'].get('average_execution_time', 'N/A')}s")
                     st.markdown(f"- Result Size: {hist['benchmark_results'].get('result_set_size', 'N/A')} rows")
+
+# Initialize session state at startup
+init_session_state()
+debug_state("App Startup")
