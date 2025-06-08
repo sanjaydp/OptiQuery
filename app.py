@@ -36,11 +36,13 @@ import json
 from typing import Dict
 import statistics
 
+# Try importing PostgreSQL support
 try:
     import psycopg2
     HAS_POSTGRES = True
 except ImportError:
     HAS_POSTGRES = False
+    st.warning("PostgreSQL support not available. Using SQLite as fallback.")
 
 # Page Configuration must be the first Streamlit command
 st.set_page_config(
@@ -473,14 +475,14 @@ def get_database_connection():
     """Get a database connection with proper error handling."""
     try:
         # Check if using SQLite
-        if st.session_state.get('use_sqlite', False):
+        if st.session_state.get('use_sqlite', True):  # Default to SQLite if no preference
             db_path = st.session_state.get('sqlite_path')
             if not db_path:
                 st.error("⚠️ SQLite database path not configured.")
                 return None
             return sqlite3.connect(db_path)
         
-        # Try PostgreSQL connection
+        # Try PostgreSQL connection if selected
         if HAS_POSTGRES:
             # Get connection parameters from session state or environment
             db_params = st.session_state.get('db_params', {})
@@ -499,7 +501,7 @@ def get_database_connection():
             
             return connection
         else:
-            st.error("⚠️ PostgreSQL support not available. Please install psycopg2-binary package.")
+            st.error("⚠️ PostgreSQL support not available. Please use SQLite instead.")
             return None
             
     except Exception as e:
@@ -1059,11 +1061,12 @@ def show_db_connection_form():
     # Database type selector
     db_type = st.sidebar.selectbox(
         "Database Type",
-        ["PostgreSQL", "SQLite"],
-        key="db_type"
+        ["SQLite", "PostgreSQL"] if HAS_POSTGRES else ["SQLite"],
+        key="db_type",
+        help="SQLite is always available. PostgreSQL requires additional setup."
     )
     
-    if db_type == "PostgreSQL":
+    if db_type == "PostgreSQL" and HAS_POSTGRES:
         st.session_state.use_sqlite = False
         
         # Initialize session state for db_params if not exists
@@ -1106,10 +1109,6 @@ def show_db_connection_form():
             )
             
             if st.form_submit_button("Connect"):
-                if not HAS_POSTGRES:
-                    st.sidebar.error("PostgreSQL support not available. Please install psycopg2-binary package.")
-                    return
-                    
                 # Update connection parameters
                 st.session_state.db_params = {
                     'host': st.session_state.db_host,
@@ -1156,10 +1155,42 @@ def show_db_connection_form():
         uploaded_file = st.sidebar.file_uploader(
             "Upload SQLite Database",
             type=['db', 'sqlite', 'sqlite3'],
-            key="sqlite_file"
+            key="sqlite_file",
+            help="Upload an existing SQLite database file"
         )
         
-        if uploaded_file:
+        # Option to create new database
+        create_new = st.sidebar.checkbox(
+            "Create New Database",
+            key="create_new_db",
+            help="Create a new SQLite database if you don't have one"
+        )
+        
+        if create_new:
+            db_name = st.sidebar.text_input(
+                "Database Name",
+                value="optiquery.db",
+                key="new_db_name",
+                help="Name for the new database file"
+            )
+            
+            if st.sidebar.button("Create Database"):
+                try:
+                    temp_dir = "temp_db"
+                    os.makedirs(temp_dir, exist_ok=True)
+                    db_path = os.path.join(temp_dir, db_name)
+                    
+                    # Create new database
+                    conn = sqlite3.connect(db_path)
+                    conn.close()
+                    
+                    st.session_state.sqlite_path = db_path
+                    st.sidebar.success(f"✅ Created new database: {db_name}")
+                    
+                except Exception as e:
+                    st.sidebar.error(f"Error creating database: {str(e)}")
+        
+        elif uploaded_file:
             # Save the uploaded file
             try:
                 temp_dir = "temp_db"
@@ -1202,7 +1233,7 @@ def show_db_connection_form():
             except Exception as e:
                 st.sidebar.error(f"Error uploading database: {str(e)}")
         else:
-            st.sidebar.info("Please upload a SQLite database file.")
+            st.sidebar.info("Please upload a SQLite database file or create a new one.")
 
 # Main app code
 def main():
