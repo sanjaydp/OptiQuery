@@ -1170,7 +1170,8 @@ def show_db_connection_form():
                 connection = get_database_connection()
                 if connection:
                     try:
-                        with connection.cursor() as cursor:
+                        cursor = connection.cursor()
+                        try:
                             cursor.execute("SELECT version();")
                             version = cursor.fetchone()[0]
                             st.sidebar.success(f"✅ Connected to PostgreSQL {version}")
@@ -1191,6 +1192,8 @@ def show_db_connection_form():
                                 schema_info.append("")
                             
                             st.session_state.schema_summary = "\n".join(schema_info)
+                        finally:
+                            cursor.close()
                             
                     except Exception as e:
                         st.sidebar.error(f"Error fetching database info: {str(e)}")
@@ -1230,7 +1233,20 @@ def show_db_connection_form():
                     
                     # Create new database
                     conn = sqlite3.connect(db_path)
-                    conn.close()
+                    cursor = conn.cursor()
+                    try:
+                        # Create a sample table
+                        cursor.execute("""
+                            CREATE TABLE IF NOT EXISTS sample_data (
+                                id INTEGER PRIMARY KEY,
+                                name TEXT,
+                                value INTEGER
+                            )
+                        """)
+                        conn.commit()
+                    finally:
+                        cursor.close()
+                        conn.close()
                     
                     st.session_state.sqlite_path = db_path
                     st.sidebar.success(f"✅ Created new database: {db_name}")
@@ -1255,24 +1271,27 @@ def show_db_connection_form():
                 if connection:
                     try:
                         cursor = connection.cursor()
-                        cursor.execute("SELECT sqlite_version();")
-                        version = cursor.fetchone()[0]
-                        st.sidebar.success(f"✅ Connected to SQLite {version}")
-                        
-                        # Get schema information
-                        cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
-                        tables = cursor.fetchall()
-                        
-                        schema_info = []
-                        for (table_name,) in tables:
-                            cursor.execute(f"PRAGMA table_info({table_name})")
-                            columns = cursor.fetchall()
-                            schema_info.append(f"Table: {table_name}")
-                            schema_info.append(f"Columns: {', '.join(f'{col[1]} ({col[2]})' for col in columns)}")
-                            schema_info.append("")
-                        
-                        st.session_state.schema_summary = "\n".join(schema_info)
-                        
+                        try:
+                            cursor.execute("SELECT sqlite_version();")
+                            version = cursor.fetchone()[0]
+                            st.sidebar.success(f"✅ Connected to SQLite {version}")
+                            
+                            # Get schema information
+                            cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
+                            tables = cursor.fetchall()
+                            
+                            schema_info = []
+                            for (table_name,) in tables:
+                                cursor.execute(f"PRAGMA table_info({table_name})")
+                                columns = cursor.fetchall()
+                                schema_info.append(f"Table: {table_name}")
+                                schema_info.append(f"Columns: {', '.join(f'{col[1]} ({col[2]})' for col in columns)}")
+                                schema_info.append("")
+                            
+                            st.session_state.schema_summary = "\n".join(schema_info)
+                        finally:
+                            cursor.close()
+                            
                     except Exception as e:
                         st.sidebar.error(f"Error fetching database info: {str(e)}")
                     finally:
@@ -1288,19 +1307,22 @@ def show_db_connection_form():
             if connection:
                 try:
                     cursor = connection.cursor()
-                    cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
-                    tables = cursor.fetchall()
-                    
-                    schema_info = []
-                    for (table_name,) in tables:
-                        cursor.execute(f"PRAGMA table_info({table_name})")
-                        columns = cursor.fetchall()
-                        schema_info.append(f"Table: {table_name}")
-                        schema_info.append(f"Columns: {', '.join(f'{col[1]} ({col[2]})' for col in columns)}")
-                        schema_info.append("")
-                    
-                    st.session_state.schema_summary = "\n".join(schema_info)
-                    
+                    try:
+                        cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
+                        tables = cursor.fetchall()
+                        
+                        schema_info = []
+                        for (table_name,) in tables:
+                            cursor.execute(f"PRAGMA table_info({table_name})")
+                            columns = cursor.fetchall()
+                            schema_info.append(f"Table: {table_name}")
+                            schema_info.append(f"Columns: {', '.join(f'{col[1]} ({col[2]})' for col in columns)}")
+                            schema_info.append("")
+                        
+                        st.session_state.schema_summary = "\n".join(schema_info)
+                    finally:
+                        cursor.close()
+                        
                 except Exception as e:
                     st.sidebar.error(f"Error fetching database info: {str(e)}")
                 finally:
