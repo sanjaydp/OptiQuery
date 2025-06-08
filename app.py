@@ -35,7 +35,12 @@ from datetime import datetime
 import json
 from typing import Dict
 import statistics
-import psycopg2
+
+try:
+    import psycopg2
+    HAS_POSTGRES = True
+except ImportError:
+    HAS_POSTGRES = False
 
 # Page Configuration must be the first Streamlit command
 st.set_page_config(
@@ -467,22 +472,36 @@ def measure_query_execution(query: str, connection, num_runs: int = 5) -> dict:
 def get_database_connection():
     """Get a database connection with proper error handling."""
     try:
-        # Get connection parameters from session state or environment
-        db_params = st.session_state.get('db_params', {})
-        if not db_params:
-            st.error("⚠️ Database connection not configured. Please set up your database connection first.")
+        # Check if using SQLite
+        if st.session_state.get('use_sqlite', False):
+            db_path = st.session_state.get('sqlite_path')
+            if not db_path:
+                st.error("⚠️ SQLite database path not configured.")
+                return None
+            return sqlite3.connect(db_path)
+        
+        # Try PostgreSQL connection
+        if HAS_POSTGRES:
+            # Get connection parameters from session state or environment
+            db_params = st.session_state.get('db_params', {})
+            if not db_params:
+                st.error("⚠️ Database connection not configured. Please set up your database connection first.")
+                return None
+                
+            # Create connection
+            connection = psycopg2.connect(
+                host=db_params.get('host', 'localhost'),
+                port=db_params.get('port', 5432),
+                database=db_params.get('database'),
+                user=db_params.get('user'),
+                password=db_params.get('password')
+            )
+            
+            return connection
+        else:
+            st.error("⚠️ PostgreSQL support not available. Please install psycopg2-binary package.")
             return None
             
-        # Create connection
-        connection = psycopg2.connect(
-            host=db_params.get('host', 'localhost'),
-            port=db_params.get('port', 5432),
-            database=db_params.get('database'),
-            user=db_params.get('user'),
-            password=db_params.get('password')
-        )
-        
-        return connection
     except Exception as e:
         st.error("❌ Database connection error:")
         st.error(str(e))
@@ -1037,85 +1056,153 @@ def show_db_connection_form():
     """Show database connection setup form."""
     st.sidebar.markdown("### 🔌 Database Connection")
     
-    # Initialize session state for db_params if not exists
-    if 'db_params' not in st.session_state:
-        st.session_state.db_params = {
-            'host': 'localhost',
-            'port': 5432,
-            'database': '',
-            'user': '',
-            'password': ''
-        }
+    # Database type selector
+    db_type = st.sidebar.selectbox(
+        "Database Type",
+        ["PostgreSQL", "SQLite"],
+        key="db_type"
+    )
     
-    # Create form for database connection
-    with st.sidebar.form("db_connection_form"):
-        st.text_input(
-            "Host",
-            value=st.session_state.db_params.get('host', 'localhost'),
-            key="db_host"
-        )
-        st.number_input(
-            "Port",
-            value=st.session_state.db_params.get('port', 5432),
-            key="db_port"
-        )
-        st.text_input(
-            "Database",
-            value=st.session_state.db_params.get('database', ''),
-            key="db_name"
-        )
-        st.text_input(
-            "Username",
-            value=st.session_state.db_params.get('user', ''),
-            key="db_user"
-        )
-        st.text_input(
-            "Password",
-            value=st.session_state.db_params.get('password', ''),
-            type="password",
-            key="db_password"
+    if db_type == "PostgreSQL":
+        st.session_state.use_sqlite = False
+        
+        # Initialize session state for db_params if not exists
+        if 'db_params' not in st.session_state:
+            st.session_state.db_params = {
+                'host': 'localhost',
+                'port': 5432,
+                'database': '',
+                'user': '',
+                'password': ''
+            }
+        
+        # Create form for PostgreSQL connection
+        with st.sidebar.form("db_connection_form"):
+            st.text_input(
+                "Host",
+                value=st.session_state.db_params.get('host', 'localhost'),
+                key="db_host"
+            )
+            st.number_input(
+                "Port",
+                value=st.session_state.db_params.get('port', 5432),
+                key="db_port"
+            )
+            st.text_input(
+                "Database",
+                value=st.session_state.db_params.get('database', ''),
+                key="db_name"
+            )
+            st.text_input(
+                "Username",
+                value=st.session_state.db_params.get('user', ''),
+                key="db_user"
+            )
+            st.text_input(
+                "Password",
+                value=st.session_state.db_params.get('password', ''),
+                type="password",
+                key="db_password"
+            )
+            
+            if st.form_submit_button("Connect"):
+                if not HAS_POSTGRES:
+                    st.sidebar.error("PostgreSQL support not available. Please install psycopg2-binary package.")
+                    return
+                    
+                # Update connection parameters
+                st.session_state.db_params = {
+                    'host': st.session_state.db_host,
+                    'port': st.session_state.db_port,
+                    'database': st.session_state.db_name,
+                    'user': st.session_state.db_user,
+                    'password': st.session_state.db_password
+                }
+                
+                # Test connection
+                connection = get_database_connection()
+                if connection:
+                    try:
+                        with connection.cursor() as cursor:
+                            cursor.execute("SELECT version();")
+                            version = cursor.fetchone()[0]
+                            st.sidebar.success(f"✅ Connected to PostgreSQL {version}")
+                            
+                            # Get and store schema information
+                            cursor.execute("""
+                                SELECT 
+                                    table_schema || '.' || table_name as table_name,
+                                    string_agg(column_name || ' ' || data_type, ', ' ORDER BY ordinal_position) as columns
+                                FROM information_schema.columns
+                                WHERE table_schema NOT IN ('pg_catalog', 'information_schema')
+                                GROUP BY table_schema, table_name
+                            """)
+                            schema_info = []
+                            for table_name, columns in cursor.fetchall():
+                                schema_info.append(f"Table: {table_name}")
+                                schema_info.append(f"Columns: {columns}")
+                                schema_info.append("")
+                            
+                            st.session_state.schema_summary = "\n".join(schema_info)
+                            
+                    except Exception as e:
+                        st.sidebar.error(f"Error fetching database info: {str(e)}")
+                    finally:
+                        connection.close()
+    else:
+        st.session_state.use_sqlite = True
+        
+        # SQLite file uploader
+        uploaded_file = st.sidebar.file_uploader(
+            "Upload SQLite Database",
+            type=['db', 'sqlite', 'sqlite3'],
+            key="sqlite_file"
         )
         
-        if st.form_submit_button("Connect"):
-            # Update connection parameters
-            st.session_state.db_params = {
-                'host': st.session_state.db_host,
-                'port': st.session_state.db_port,
-                'database': st.session_state.db_name,
-                'user': st.session_state.db_user,
-                'password': st.session_state.db_password
-            }
-            
-            # Test connection
-            connection = get_database_connection()
-            if connection:
-                try:
-                    with connection.cursor() as cursor:
-                        cursor.execute("SELECT version();")
+        if uploaded_file:
+            # Save the uploaded file
+            try:
+                temp_dir = "temp_db"
+                os.makedirs(temp_dir, exist_ok=True)
+                db_path = os.path.join(temp_dir, uploaded_file.name)
+                
+                with open(db_path, "wb") as f:
+                    f.write(uploaded_file.getvalue())
+                
+                st.session_state.sqlite_path = db_path
+                
+                # Test connection
+                connection = get_database_connection()
+                if connection:
+                    try:
+                        cursor = connection.cursor()
+                        cursor.execute("SELECT sqlite_version();")
                         version = cursor.fetchone()[0]
-                        st.sidebar.success(f"✅ Connected to PostgreSQL {version}")
+                        st.sidebar.success(f"✅ Connected to SQLite {version}")
                         
-                        # Get and store schema information
-                        cursor.execute("""
-                            SELECT 
-                                table_schema || '.' || table_name as table_name,
-                                string_agg(column_name || ' ' || data_type, ', ' ORDER BY ordinal_position) as columns
-                            FROM information_schema.columns
-                            WHERE table_schema NOT IN ('pg_catalog', 'information_schema')
-                            GROUP BY table_schema, table_name
-                        """)
+                        # Get schema information
+                        cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
+                        tables = cursor.fetchall()
+                        
                         schema_info = []
-                        for table_name, columns in cursor.fetchall():
+                        for (table_name,) in tables:
+                            cursor.execute(f"PRAGMA table_info({table_name})")
+                            columns = cursor.fetchall()
                             schema_info.append(f"Table: {table_name}")
-                            schema_info.append(f"Columns: {columns}")
+                            schema_info.append(f"Columns: {', '.join(f'{col[1]} ({col[2]})' for col in columns)}")
                             schema_info.append("")
                         
                         st.session_state.schema_summary = "\n".join(schema_info)
                         
-                except Exception as e:
-                    st.sidebar.error(f"Error fetching database info: {str(e)}")
-                finally:
-                    connection.close()
+                    except Exception as e:
+                        st.sidebar.error(f"Error fetching database info: {str(e)}")
+                    finally:
+                        connection.close()
+                        
+            except Exception as e:
+                st.sidebar.error(f"Error uploading database: {str(e)}")
+        else:
+            st.sidebar.info("Please upload a SQLite database file.")
 
 # Main app code
 def main():
