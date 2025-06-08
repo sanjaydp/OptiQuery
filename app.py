@@ -35,22 +35,7 @@ from datetime import datetime
 import json
 from typing import Dict
 
-# Initialize session state at startup - MUST BE AT THE VERY TOP
-if "initialized" not in st.session_state:
-    init_session_state()
-debug_state("App Startup")
-
-# Page Configuration
-st.set_page_config(
-    page_title="OptiQuery – SQL Optimizer Assistant",
-    page_icon="🧠",
-    layout="wide"
-)
-
-# Initialize session state
-if "debug" not in st.session_state:
-    st.session_state.debug = True  # Enable debugging
-
+# Function definitions first
 def init_session_state():
     """Initialize all session state variables in one place"""
     if "initialized" not in st.session_state:
@@ -105,6 +90,22 @@ def debug_state(location: str):
         st.sidebar.write("Has Query Results:", bool(st.session_state.query_results["original"]["data"] or st.session_state.query_results["optimized"]["data"]))
         st.sidebar.write("Analysis Results Keys:", list(st.session_state.analysis_results.keys()))
         st.sidebar.write("Last Analysis ID:", st.session_state.last_analysis_id)
+
+# Initialize debug flag first
+if "debug" not in st.session_state:
+    st.session_state.debug = True  # Enable debugging
+
+# Now initialize the rest of the session state
+if "initialized" not in st.session_state:
+    init_session_state()
+debug_state("App Startup")
+
+# Page Configuration
+st.set_page_config(
+    page_title="OptiQuery – SQL Optimizer Assistant",
+    page_icon="🧠",
+    layout="wide"
+)
 
 def extract_schema_summary(db_path):
     """Create a string summary of all tables and columns for LLM context."""
