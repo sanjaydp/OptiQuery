@@ -35,6 +35,13 @@ from datetime import datetime
 import json
 from typing import Dict
 
+# Page Configuration must be the first Streamlit command
+st.set_page_config(
+    page_title="OptiQuery – SQL Optimizer Assistant",
+    page_icon="🧠",
+    layout="wide"
+)
+
 # Function definitions first
 def init_session_state():
     """Initialize all session state variables in one place"""
@@ -99,13 +106,6 @@ if "debug" not in st.session_state:
 if "initialized" not in st.session_state:
     init_session_state()
 debug_state("App Startup")
-
-# Page Configuration
-st.set_page_config(
-    page_title="OptiQuery – SQL Optimizer Assistant",
-    page_icon="🧠",
-    layout="wide"
-)
 
 def extract_schema_summary(db_path):
     """Create a string summary of all tables and columns for LLM context."""
