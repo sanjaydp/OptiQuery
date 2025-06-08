@@ -17,6 +17,7 @@ from openai import OpenAI
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
 import io
+import sqlite3
 
 load_dotenv()
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
@@ -37,6 +38,27 @@ if "complexity_score" not in st.session_state:
     st.session_state.complexity_score = 0
 if "complexity_label" not in st.session_state:
     st.session_state.complexity_label = ""
+
+
+def extract_schema_summary(db_path):
+    """Create a string summary of all tables and columns for LLM context."""
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
+        tables = cursor.fetchall()
+
+        schema_str = ""
+        for (table_name,) in tables:
+            cursor.execute(f"PRAGMA table_info({table_name})")
+            columns = cursor.fetchall()
+            col_names = ", ".join([col[1] for col in columns])
+            schema_str += f"Table `{table_name}`: columns -> {col_names}\n"
+        conn.close()
+        return schema_str.strip()
+    except Exception as e:
+        return f"Error extracting schema: {e}"
+
 
 def explain_sql_with_plan(query):
     """Run EXPLAIN command on the query to get the execution plan."""
@@ -155,150 +177,244 @@ if st.button("🔍 Convert to SQL"):
         st.warning("Please enter a valid natural language query.")
 
 
-st.markdown("### 📋 Upload a `.sql` file or .db file or paste your SQL query below")
-uploaded_file = st.file_uploader("Upload SQL or SQLite DB File", type=["sql", "db"])
+# Database Analysis Section
+st.markdown("### 📊 Database Connection")
 
-query = ""
-db_path = None  # Declare explicitly
-
-# Case 1: SQL file uploaded – read its content directly
-if uploaded_file and uploaded_file.name.endswith(".sql"):
-    query = uploaded_file.read().decode("utf-8")
-    st.info("✅ SQL file detected. The query from the file will be used.")
-    db_path = None  # Make sure not to use a DB
-
-# Case 2: DB file uploaded – save and ask for query input
-elif uploaded_file and uploaded_file.name.endswith(".db"):
-    db_path = f"/tmp/{uploaded_file.name}"
+uploaded_file = st.file_uploader("Upload your SQLite Database File", type=["db"])
+if uploaded_file:
+    # Save uploaded database
+    db_path = f"temp_{uploaded_file.name}"
     with open(db_path, "wb") as f:
         f.write(uploaded_file.read())
-    st.success(f"✅ Uploaded and saved database to: {db_path}")
-
-    # Now allow the user to paste query
-    query = st.text_area("Enter SQL query to run on uploaded database:", height=200)
-
-# Case 3: No file uploaded – let user paste the query manually
-elif not uploaded_file:
-    query = st.text_area("Paste your SQL query here:", height=200)
-
-
-fix_mode = st.radio("Choose optimization mode:", ["🪄 Auto-Fix First", "🤖 GPT Only"])
-
-if st.button("🔍 Analyze & Optimize"):
-    if not query.strip():
-        st.warning("Please upload or paste a SQL query.")
+    
+    # Extract and display schema
+    schema_info = extract_schema_summary(db_path)
+    if schema_info:
+        st.session_state.db_path = db_path
+        st.session_state.schema_summary = schema_info
+        
+        # Display database structure
+        st.success("✅ Database uploaded successfully!")
+        st.markdown("#### 📑 Database Schema")
+        for line in schema_info.split('\n'):
+            st.markdown(f"- {line}")
+            
+        # Display sample data for each table
+        st.markdown("#### 📊 Sample Data Preview")
+        try:
+            conn = sqlite3.connect(db_path)
+            cursor = conn.cursor()
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
+            tables = cursor.fetchall()
+            
+            for (table_name,) in tables:
+                with st.expander(f"Preview: {table_name}"):
+                    df = pd.read_sql_query(f"SELECT * FROM {table_name} LIMIT 5", conn)
+                    st.dataframe(df)
+                    
+                    # Show table statistics
+                    cursor.execute(f"SELECT COUNT(*) FROM {table_name}")
+                    row_count = cursor.fetchone()[0]
+                    st.markdown(f"Total rows: {row_count:,}")
+            conn.close()
+        except Exception as e:
+            st.error(f"Error previewing data: {str(e)}")
     else:
-        st.session_state.original_query = query
+        st.error("❌ Error reading database schema. Please check if the file is a valid SQLite database.")
 
-        if fix_mode == "🪄 Auto-Fix First":
-            with st.spinner("Applying rule-based fixes..."):
-                auto_fixed_sql, fixes_applied = apply_auto_fixes(query, db_path)
-
-            st.subheader("✅ Auto-Fixed SQL (Before GPT)")
-            st.code(auto_fixed_sql, language="sql")
-            if fixes_applied:
-                st.markdown("**Applied Fixes:**")
-                for fix in fixes_applied:
-                    st.markdown(f"- {fix}")
-            else:
-                st.info("No auto-fixes were applicable.")
-
-            if st.button("🤖 Continue to GPT Optimization"):
-                with st.spinner("Optimizing with GPT..."):
-                    issues = analyze_sql(auto_fixed_sql)
-                    optimized_sql = optimize_query(auto_fixed_sql)
-                    explanation = explain_optimization(auto_fixed_sql, optimized_sql)
-
-                st.session_state.optimized_sql = optimized_sql
-                st.session_state.explanation = explanation
-                st.session_state.issues = issues
-
-        else:
-            with st.spinner("Optimizing with GPT..."):
-                issues = analyze_sql(query)
-                optimized_sql = optimize_query(query)
-                explanation = explain_optimization(query, optimized_sql)
-
-            st.session_state.optimized_sql = optimized_sql
-            st.session_state.explanation = explanation
-            st.session_state.issues = issues
-
-        score, label = calculate_query_complexity(st.session_state.optimized_sql)
-        st.session_state.complexity_score = score
-        st.session_state.complexity_label = label
-
-if st.session_state.optimized_sql.strip():
-    st.subheader("📌 Identified Issues")
-    for issue in st.session_state.issues:
-        st.markdown(f"- {issue}")
-
-    st.subheader("✅ Optimized Query")
-    st.code(st.session_state.optimized_sql, language='sql')
-
-    st.subheader("📊 Query Complexity Score")
-    st.markdown(f"**Score**: {st.session_state.complexity_score} – **{st.session_state.complexity_label}**")
-
-    if st.checkbox("🧠 Show Inline AI Review Comments"):
-        with st.spinner("Reviewing query line by line..."):
-            reviewed = add_inline_comments(st.session_state.optimized_sql)
-        st.subheader("🧾 Inline Comments on Optimized Query")
-        st.code(reviewed, language="sql")
-
-    st.subheader("💬 Optimization Explanation")
-    st.write(st.session_state.explanation)
-
-    report_md = generate_report(
-        st.session_state.original_query,
-        st.session_state.issues,
-        st.session_state.optimized_sql,
-        st.session_state.explanation
+# Query Input Section
+if "db_path" in st.session_state:
+    st.markdown("### 📝 SQL Query Input")
+    
+    # Option to upload SQL file or paste query
+    query_input_method = st.radio(
+        "Choose input method:",
+        ["Upload SQL File", "Paste SQL Query"]
     )
-
-    st.download_button(
-        label="📥 Download Report as .md",
-        data=report_md,
-        file_name="optiquery_report.md",
-        mime="text/markdown"
-    )
-
-    # Add PDF download button
-    st.download_button(
-            label="📄 Download PDF Report",
-            data=convert_markdown_to_pdf(report_md),
-            file_name="optiquery_report.pdf",
-            mime="application/pdf"
+    
+    if query_input_method == "Upload SQL File":
+        sql_file = st.file_uploader("Upload SQL File", type=["sql"])
+        if sql_file:
+            query = sql_file.read().decode("utf-8")
+            st.code(query, language="sql")
+    else:
+        query = st.text_area(
+            "Enter your SQL query:",
+            height=200,
+            help="Write your SQL query here. The schema information is shown above for reference."
         )
 
-    diff_text = generate_diff(st.session_state.original_query, st.session_state.optimized_sql)
-    st.subheader("🔀 Before vs After Diff")
-    st.code(diff_text, language='diff')
+    if query and query.strip():
+        st.session_state.original_query = query
+        
+        # Analysis Options
+        st.markdown("### 🔍 Analysis Options")
+        analysis_options = st.multiselect(
+            "Choose analysis types:",
+            ["Syntax Check", "Performance Analysis", "Index Recommendations", "Query Plan"],
+            default=["Syntax Check", "Performance Analysis"]
+        )
 
-    explain_plan = explain_sql_with_plan(st.session_state.optimized_sql)
-    explain_plan_df = parse_explain_plan(explain_plan)
-    st.dataframe(explain_plan_df)  # Show EXPLAIN plan
+        if st.button("🚀 Analyze & Optimize Query"):
+            # Collect table statistics
+            table_stats = {}
+            try:
+                conn = sqlite3.connect(st.session_state.db_path)
+                cursor = conn.cursor()
+                cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
+                tables = cursor.fetchall()
+                
+                for (table_name,) in tables:
+                    cursor.execute(f"SELECT COUNT(*) FROM {table_name}")
+                    row_count = cursor.fetchone()[0]
+                    
+                    # Get column statistics
+                    cursor.execute(f"PRAGMA table_info({table_name})")
+                    columns = cursor.fetchall()
+                    
+                    table_stats[table_name] = {
+                        "row_count": row_count,
+                        "columns": [col[1] for col in columns]
+                    }
+                conn.close()
+            except Exception as e:
+                st.error(f"Error collecting table statistics: {str(e)}")
 
-    suggestions = suggest_based_on_explain_plan(explain_plan_df)
-    if suggestions:
-        st.subheader("🔧 Suggested Optimizations")
-        for suggestion in suggestions:
-            st.markdown(f"- {suggestion}")
+            # Perform selected analyses
+            with st.spinner("Analyzing query..."):
+                # 1. Syntax Check
+                if "Syntax Check" in analysis_options:
+                    st.markdown("#### 📝 Syntax Analysis")
+                    issues = analyze_sql(query)
+                    if issues:
+                        for issue in issues:
+                            st.warning(f"⚠️ {issue}")
+                    else:
+                        st.success("✅ No syntax issues found")
 
-    # Show Performance Comparison
-    if st.button("📊 Compare Performance"):
-        result_orig = execute_query(db_path, st.session_state.original_query)
-        result_opt = execute_query(db_path, st.session_state.optimized_sql)
+                # 2. Performance Analysis & Optimization
+                if "Performance Analysis" in analysis_options:
+                    st.markdown("#### 🚀 Query Optimization")
+                    
+                    # Get optimization suggestions
+                    optimization_result = optimize_query(
+                        query,
+                        schema_info=st.session_state.schema_summary,
+                        table_stats=table_stats
+                    )
+                    
+                    # Display optimized query
+                    st.markdown("**Optimized Query:**")
+                    st.code(optimization_result["optimized_query"], language="sql")
+                    
+                    # Show optimization reasoning
+                    st.markdown("**Optimization Details:**")
+                    st.info(optimization_result["optimization_reasoning"])
+                    
+                    # Show estimated improvement
+                    st.metric(
+                        label="Estimated Performance Improvement",
+                        value=optimization_result["estimated_improvement"]
+                    )
 
-        if result_orig["success"] and result_opt["success"]:
-            perf_data = {
-                "Query": ["Original", "Optimized"],
-                "Execution Time (s)": [result_orig["execution_time"], result_opt["execution_time"]],
-                "Row Count": [result_orig["row_count"], result_opt["row_count"]],
-            }
-            df_perf = pd.DataFrame(perf_data)
-            fig_time = px.bar(df_perf, x="Query", y="Execution Time (s)", color="Query", title="⏱️ Execution Time Comparison")
-            st.plotly_chart(fig_time)
-            fig_rows = px.bar(df_perf, x="Query", y="Row Count", color="Query", title="📦 Row Count Comparison")
-            st.plotly_chart(fig_rows)
+                # 3. Index Recommendations
+                if "Index Recommendations" in analysis_options:
+                    st.markdown("#### 📊 Index Recommendations")
+                    if "index_suggestions" in optimization_result:
+                        for idx in optimization_result["index_suggestions"]:
+                            st.markdown(f"- {idx}")
+                    else:
+                        st.info("No index recommendations available")
+
+                # 4. Query Plan Analysis
+                if "Query Plan" in analysis_options:
+                    st.markdown("#### 🔍 Query Execution Plan")
+                    try:
+                        explain_plan = explain_sql_with_plan(query)
+                        explain_plan_df = parse_explain_plan(explain_plan)
+                        st.dataframe(explain_plan_df)
+                        
+                        # Show plan-based suggestions
+                        plan_suggestions = suggest_based_on_explain_plan(explain_plan_df)
+                        if plan_suggestions:
+                            st.markdown("**Suggestions based on execution plan:**")
+                            for suggestion in plan_suggestions:
+                                st.markdown(f"- {suggestion}")
+                    except Exception as e:
+                        st.error(f"Error analyzing query plan: {str(e)}")
+
+        if st.session_state.optimized_sql.strip():
+            st.subheader("📌 Identified Issues")
+            for issue in st.session_state.issues:
+                st.markdown(f"- {issue}")
+
+            st.subheader("✅ Optimized Query")
+            st.code(st.session_state.optimized_sql, language='sql')
+
+            st.subheader("📊 Query Complexity Score")
+            st.markdown(f"**Score**: {st.session_state.complexity_score} – **{st.session_state.complexity_label}**")
+
+            if st.checkbox("🧠 Show Inline AI Review Comments"):
+                with st.spinner("Reviewing query line by line..."):
+                    reviewed = add_inline_comments(st.session_state.optimized_sql)
+                st.subheader("🧾 Inline Comments on Optimized Query")
+                st.code(reviewed, language="sql")
+
+            st.subheader("💬 Optimization Explanation")
+            st.write(st.session_state.explanation)
+
+            report_md = generate_report(
+                st.session_state.original_query,
+                st.session_state.issues,
+                st.session_state.optimized_sql,
+                st.session_state.explanation
+            )
+
+            st.download_button(
+                label="📥 Download Report as .md",
+                data=report_md,
+                file_name="optiquery_report.md",
+                mime="text/markdown"
+            )
+
+            # Add PDF download button
+            st.download_button(
+                    label="📄 Download PDF Report",
+                    data=convert_markdown_to_pdf(report_md),
+                    file_name="optiquery_report.pdf",
+                    mime="application/pdf"
+                )
+
+            diff_text = generate_diff(st.session_state.original_query, st.session_state.optimized_sql)
+            st.subheader("🔀 Before vs After Diff")
+            st.code(diff_text, language='diff')
+
+            explain_plan = explain_sql_with_plan(st.session_state.optimized_sql)
+            explain_plan_df = parse_explain_plan(explain_plan)
+            st.dataframe(explain_plan_df)  # Show EXPLAIN plan
+
+            suggestions = suggest_based_on_explain_plan(explain_plan_df)
+            if suggestions:
+                st.subheader("🔧 Suggested Optimizations")
+                for suggestion in suggestions:
+                    st.markdown(f"- {suggestion}")
+
+            # Show Performance Comparison
+            if st.button("📊 Compare Performance"):
+                result_orig = execute_query(db_path, st.session_state.original_query)
+                result_opt = execute_query(db_path, st.session_state.optimized_sql)
+
+                if result_orig["success"] and result_opt["success"]:
+                    perf_data = {
+                        "Query": ["Original", "Optimized"],
+                        "Execution Time (s)": [result_orig["execution_time"], result_opt["execution_time"]],
+                        "Row Count": [result_orig["row_count"], result_opt["row_count"]],
+                    }
+                    df_perf = pd.DataFrame(perf_data)
+                    fig_time = px.bar(df_perf, x="Query", y="Execution Time (s)", color="Query", title="⏱️ Execution Time Comparison")
+                    st.plotly_chart(fig_time)
+                    fig_rows = px.bar(df_perf, x="Query", y="Row Count", color="Query", title="📦 Row Count Comparison")
+                    st.plotly_chart(fig_rows)
 
 # 💬 Chat Assistant Panel
 with st.sidebar:
