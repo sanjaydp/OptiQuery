@@ -1019,234 +1019,88 @@ Provide a clear, concise answer focusing on the specific question. If relevant, 
 
 # Add database connection setup UI
 def show_db_connection_form():
-    """Show database connection setup form."""
-    st.sidebar.markdown("### 🔌 Database Connection")
-    
-    # Show current database status
-    if st.session_state.get('sqlite_path'):
-        st.sidebar.success(f"✅ Using SQLite database: {os.path.basename(st.session_state.sqlite_path)}")
-    
-    # Database type selector
-    db_type = st.sidebar.selectbox(
-        "Database Type",
-        ["SQLite", "PostgreSQL"] if HAS_POSTGRES else ["SQLite"],
-        key="db_type",
-        help="SQLite is always available. PostgreSQL requires additional setup."
-    )
-    
-    if db_type == "PostgreSQL" and HAS_POSTGRES:
-        st.session_state.use_sqlite = False
+    """Show database connection settings in the sidebar."""
+    with st.sidebar:
+        st.markdown("### ⚙️ Database Connection")
         
-        # Initialize session state for db_params if not exists
-        if 'db_params' not in st.session_state:
-            st.session_state.db_params = {
-                'host': 'localhost',
-                'port': 5432,
-                'database': '',
-                'user': '',
-                'password': ''
-            }
-        
-        # Create form for PostgreSQL connection
-        with st.sidebar.form("db_connection_form"):
-            st.text_input(
-                "Host",
-                value=st.session_state.db_params.get('host', 'localhost'),
-                key="db_host"
-            )
-            st.number_input(
-                "Port",
-                value=st.session_state.db_params.get('port', 5432),
-                key="db_port"
-            )
-            st.text_input(
-                "Database",
-                value=st.session_state.db_params.get('database', ''),
-                key="db_name"
-            )
-            st.text_input(
-                "Username",
-                value=st.session_state.db_params.get('user', ''),
-                key="db_user"
-            )
-            st.text_input(
-                "Password",
-                value=st.session_state.db_params.get('password', ''),
-                type="password",
-                key="db_password"
-            )
-            
-            if st.form_submit_button("Connect"):
-                # Update connection parameters
-                st.session_state.db_params = {
-                    'host': st.session_state.db_host,
-                    'port': st.session_state.db_port,
-                    'database': st.session_state.db_name,
-                    'user': st.session_state.db_user,
-                    'password': st.session_state.db_password
-                }
-                
-                # Test connection
-                connection = get_database_connection()
-                if connection:
-                    try:
-                        cursor = connection.cursor()
-                        try:
-                            cursor.execute("SELECT version();")
-                            version = cursor.fetchone()[0]
-                            st.sidebar.success(f"✅ Connected to PostgreSQL {version}")
-                            
-                            # Get and store schema information
-                            cursor.execute("""
-                                SELECT 
-                                    table_schema || '.' || table_name as table_name,
-                                    string_agg(column_name || ' ' || data_type, ', ' ORDER BY ordinal_position) as columns
-                                FROM information_schema.columns
-                                WHERE table_schema NOT IN ('pg_catalog', 'information_schema')
-                                GROUP BY table_schema, table_name
-                            """)
-                            schema_info = []
-                            for table_name, columns in cursor.fetchall():
-                                schema_info.append(f"Table: {table_name}")
-                                schema_info.append(f"Columns: {columns}")
-                                schema_info.append("")
-                            
-                            st.session_state.schema_summary = "\n".join(schema_info)
-                        finally:
-                            cursor.close()
-                            
-                    except Exception as e:
-                        st.sidebar.error(f"Error fetching database info: {str(e)}")
-                    finally:
-                        connection.close()
-    else:
-        st.session_state.use_sqlite = True
-        
-        # SQLite file uploader
-        uploaded_file = st.sidebar.file_uploader(
-            "Upload SQLite Database",
-            type=['db', 'sqlite', 'sqlite3'],
-            key="sqlite_file",
-            help="Upload an existing SQLite database file"
+        # Database type selection
+        db_type = st.radio(
+            "Select Database Type:",
+            ["SQLite", "PostgreSQL"],
+            index=0 if st.session_state.get('use_sqlite', True) else 1,
+            help="Choose your database type"
         )
         
-        # Option to create new database
-        create_new = st.sidebar.checkbox(
-            "Create New Database",
-            key="create_new_db",
-            help="Create a new SQLite database if you don't have one"
-        )
+        st.session_state.use_sqlite = (db_type == "SQLite")
         
-        if create_new:
-            db_name = st.sidebar.text_input(
-                "Database Name",
-                value="optiquery.db",
-                key="new_db_name",
-                help="Name for the new database file"
+        if st.session_state.use_sqlite:
+            # SQLite settings
+            sqlite_path = st.text_input(
+                "SQLite Database Path",
+                value=st.session_state.get('sqlite_path', 'optiquery.db'),
+                help="Path to your SQLite database file"
             )
+            st.session_state.sqlite_path = sqlite_path
             
-            if st.sidebar.button("Create Database"):
-                try:
-                    temp_dir = "temp_db"
-                    os.makedirs(temp_dir, exist_ok=True)
-                    db_path = os.path.join(temp_dir, db_name)
-                    
-                    # Create new database
-                    conn = sqlite3.connect(db_path)
-                    cursor = conn.cursor()
-                    try:
-                        # Create a sample table
-                        cursor.execute("""
-                            CREATE TABLE IF NOT EXISTS sample_data (
-                                id INTEGER PRIMARY KEY,
-                                name TEXT,
-                                value INTEGER
-                            )
-                        """)
-                        conn.commit()
-                    finally:
-                        cursor.close()
-                        conn.close()
-                    
-                    st.session_state.sqlite_path = db_path
-                    st.sidebar.success(f"✅ Created new database: {db_name}")
-                    
-                except Exception as e:
-                    st.sidebar.error(f"Error creating database: {str(e)}")
-        
-        elif uploaded_file:
-            # Save the uploaded file
-            try:
-                temp_dir = "temp_db"
-                os.makedirs(temp_dir, exist_ok=True)
-                db_path = os.path.join(temp_dir, uploaded_file.name)
+            if st.button("Initialize Sample Database"):
+                initialize_sqlite_database()
+                st.success("✅ Sample database initialized!")
+                st.session_state.schema_summary = get_schema_summary()
                 
-                with open(db_path, "wb") as f:
-                    f.write(uploaded_file.getvalue())
-                
-                st.session_state.sqlite_path = db_path
-                
-                # Test connection
-                connection = get_database_connection()
-                if connection:
-                    try:
-                        cursor = connection.cursor()
-                        try:
-                            cursor.execute("SELECT sqlite_version();")
-                            version = cursor.fetchone()[0]
-                            st.sidebar.success(f"✅ Connected to SQLite {version}")
-                            
-                            # Get schema information
-                            cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
-                            tables = cursor.fetchall()
-                            
-                            schema_info = []
-                            for (table_name,) in tables:
-                                cursor.execute(f"PRAGMA table_info({table_name})")
-                                columns = cursor.fetchall()
-                                schema_info.append(f"Table: {table_name}")
-                                schema_info.append(f"Columns: {', '.join(f'{col[1]} ({col[2]})' for col in columns)}")
-                                schema_info.append("")
-                            
-                            st.session_state.schema_summary = "\n".join(schema_info)
-                        finally:
-                            cursor.close()
-                            
-                    except Exception as e:
-                        st.sidebar.error(f"Error fetching database info: {str(e)}")
-                    finally:
-                        connection.close()
-                        
-            except Exception as e:
-                st.sidebar.error(f"Error uploading database: {str(e)}")
         else:
-            st.sidebar.info("Using default database. You can upload a different database file or create a new one.")
+            # PostgreSQL settings
+            col1, col2 = st.columns(2)
+            with col1:
+                pg_host = st.text_input(
+                    "Host",
+                    value=st.session_state.get('pg_host', 'localhost'),
+                    help="PostgreSQL host"
+                )
+                pg_database = st.text_input(
+                    "Database",
+                    value=st.session_state.get('pg_database', ''),
+                    help="PostgreSQL database name"
+                )
+                pg_user = st.text_input(
+                    "User",
+                    value=st.session_state.get('pg_user', ''),
+                    help="PostgreSQL username"
+                )
             
-            # Show schema of default database
-            connection = get_database_connection()
-            if connection:
-                try:
-                    cursor = connection.cursor()
-                    try:
-                        cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
-                        tables = cursor.fetchall()
-                        
-                        schema_info = []
-                        for (table_name,) in tables:
-                            cursor.execute(f"PRAGMA table_info({table_name})")
-                            columns = cursor.fetchall()
-                            schema_info.append(f"Table: {table_name}")
-                            schema_info.append(f"Columns: {', '.join(f'{col[1]} ({col[2]})' for col in columns)}")
-                            schema_info.append("")
-                        
-                        st.session_state.schema_summary = "\n".join(schema_info)
-                    finally:
-                        cursor.close()
-                        
-                except Exception as e:
-                    st.sidebar.error(f"Error fetching database info: {str(e)}")
-                finally:
-                    connection.close()
+            with col2:
+                pg_port = st.number_input(
+                    "Port",
+                    value=st.session_state.get('pg_port', 5432),
+                    help="PostgreSQL port"
+                )
+                pg_password = st.text_input(
+                    "Password",
+                    type="password",
+                    value=st.session_state.get('pg_password', ''),
+                    help="PostgreSQL password"
+                )
+            
+            # Store PostgreSQL settings in session state
+            st.session_state.pg_host = pg_host
+            st.session_state.pg_port = pg_port
+            st.session_state.pg_database = pg_database
+            st.session_state.pg_user = pg_user
+            st.session_state.pg_password = pg_password
+        
+        # OpenAI API key for AI-powered suggestions
+        st.markdown("### 🤖 AI Settings")
+        openai_key = st.text_input(
+            "OpenAI API Key (Optional)",
+            type="password",
+            value=st.session_state.get('openai_api_key', ''),
+            help="Enter your OpenAI API key for AI-powered optimization suggestions"
+        )
+        st.session_state.openai_api_key = openai_key
+        
+        # Show current database schema if available
+        if st.session_state.get('schema_summary'):
+            with st.expander("📚 Database Schema", expanded=False):
+                st.text(st.session_state.schema_summary)
 
 # Main app code
 def update_query_history(query: str, performance_metrics: dict = None):
@@ -1367,6 +1221,14 @@ def format_time(seconds: float) -> str:
 
 def main():
     st.title("OptiQuery: SQL Optimizer Assistant")
+    
+    # Initialize SQLite database with sample data
+    if st.session_state.get('use_sqlite', True):
+        initialize_sqlite_database()
+        st.session_state.sqlite_path = 'optiquery.db'
+        
+        # Get and store schema summary
+        st.session_state.schema_summary = get_schema_summary()
     
     # Show database connection form in sidebar
     show_db_connection_form()
