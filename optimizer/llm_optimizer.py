@@ -51,21 +51,29 @@ Return the following in a JSON format:
     response = client.chat.completions.create(
         model="gpt-3.5-turbo",
         messages=[
-            {"role": "system", "content": "You are a SQL performance expert that provides detailed optimization suggestions."},
+            {"role": "system", "content": "You are a SQL performance expert that provides detailed optimization suggestions. Always respond with valid JSON."},
             {"role": "user", "content": prompt}
         ],
-        temperature=0.2,
-        response_format={ "type": "json" }
+        temperature=0.2
     )
     
     try:
         result = json.loads(response.choices[0].message.content)
         return result
-    except:
+    except json.JSONDecodeError as e:
+        # If JSON parsing fails, try to extract the optimized query from the raw response
+        content = response.choices[0].message.content
+        return {
+            "optimized_query": query,  # Return original query as fallback
+            "index_suggestions": [],
+            "optimization_reasoning": f"Error parsing optimization response: {content[:200]}...",
+            "estimated_improvement": "0%"
+        }
+    except Exception as e:
         return {
             "optimized_query": query,
             "index_suggestions": [],
-            "optimization_reasoning": "Error parsing optimization response",
+            "optimization_reasoning": f"Error during optimization: {str(e)}",
             "estimated_improvement": "0%"
         }
 
