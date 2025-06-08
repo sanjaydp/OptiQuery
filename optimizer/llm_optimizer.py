@@ -18,164 +18,190 @@ def get_openai_client():
 def optimize_query(query: str, schema_info: str = None, table_stats: dict = None) -> str:
     client = get_openai_client()
     
+    # Clean and normalize the input query
+    cleaned_query = clean_sql_query(query)
+    
     # Build a comprehensive context for the LLM
     context = [
-        "You are an expert SQL optimization engine. Analyze the query considering:",
-        "1. Query structure and complexity",
-        "2. Table relationships and cardinality",
-        "3. Index usage and opportunities",
-        "4. Join strategies and order",
-        "5. Subquery and CTE optimizations",
-        "6. Data access patterns",
-        "7. Potential bottlenecks",
+        "You are an expert SQL optimization engine. Your task is to optimize the following SQL query.",
+        "Provide your response in the following format:",
         "",
-        "IMPORTANT: When providing the optimized query:",
-        "- Format SQL keywords in UPPERCASE",
-        "- Use proper indentation for readability",
-        "- Place each major clause (SELECT, FROM, WHERE, etc.) on a new line",
-        "- Properly escape quotes and special characters in the JSON response",
-        "- Ensure the query is syntactically valid"
+        "```json",
+        "{",
+        '    "optimized_query": "The optimized SQL query with proper formatting",',
+        '    "analysis": {',
+        '        "complexity": "Analysis of query complexity",',
+        '        "bottlenecks": ["List of bottlenecks"],',
+        '        "data_access_patterns": "How data is accessed",',
+        '        "resource_usage": "Resource utilization analysis"',
+        '    },',
+        '    "changes_made": ["List of changes"],',
+        '    "estimated_improvement": "Estimated improvement percentage",',
+        '    "confidence": "high/medium/low",',
+        '    "warnings": ["Any warnings"],',
+        '    "validation_steps": ["Steps to validate"]',
+        "}",
+        "```",
+        "",
+        "Follow these rules:",
+        "1. Format SQL keywords in UPPERCASE",
+        "2. Use proper indentation",
+        "3. Place each clause on a new line",
+        "4. Properly escape quotes",
+        "5. Ensure syntactically valid SQL",
+        "6. Keep the original query logic intact"
     ]
     
     if schema_info:
-        context.append("\nDatabase Schema:\n" + schema_info)
+        context.extend([
+            "",
+            "Database Schema:",
+            schema_info
+        ])
     
     if table_stats:
-        context.append("\nTable Statistics:")
+        context.extend([
+            "",
+            "Table Statistics:"
+        ])
         for table, stats in table_stats.items():
-            context.append(f"- {table}:")
-            context.append(f"  • Rows: {stats['row_count']:,}")
-            if 'indexes' in stats:
-                context.append(f"  • Indexes: {', '.join(stats['indexes'].keys())}")
-            if 'columns' in stats:
-                context.append(f"  • Columns: {', '.join(stats['columns'])}")
+            context.extend([
+                f"- {table}:",
+                f"  • Rows: {stats['row_count']:,}",
+                f"  • Indexes: {', '.join(stats['indexes'].keys()) if 'indexes' in stats else 'None'}",
+                f"  • Columns: {', '.join(stats['columns']) if 'columns' in stats else 'Unknown'}"
+            ])
     
     context.extend([
-        "\nOptimization Guidelines:",
-        "- Suggest indexes only when they provide significant benefit",
-        "- Consider table sizes and data distribution",
-        "- Evaluate trade-offs between different optimization strategies",
-        "- Provide clear reasoning for each optimization",
-        "- Be conservative with improvement estimates",
-        "- Consider both read and write performance impacts",
-        "- Evaluate memory and resource usage",
-        "\nAnalyze and optimize the following query:"
+        "",
+        "Original Query:",
+        cleaned_query
     ])
     
-    prompt = f"""{'\n'.join(context)}
-
-SQL Query:
-{query}
-
-Provide a detailed analysis in JSON format. The response MUST be valid JSON with properly escaped strings:
-{{
-    "analysis": {{
-        "complexity": "detailed analysis of query complexity",
-        "bottlenecks": ["identified performance bottlenecks"],
-        "data_access_patterns": "analysis of how data is accessed",
-        "resource_usage": "expected resource utilization"
-    }},
-    "optimized_query": "SQL query with proper formatting and escaping",
-    "index_suggestions": ["list of suggested indexes with clear justification"],
-    "optimization_reasoning": "detailed explanation of each optimization",
-    "estimated_improvement": "conservative improvement estimate with range",
-    "confidence": "high/medium/low with explanation",
-    "changes_made": ["specific changes with impact analysis"],
-    "warnings": ["potential risks or trade-offs"],
-    "validation_steps": ["suggested steps to validate improvements"]
-}}
-
-ENSURE that:
-1. The response is valid JSON
-2. All strings are properly escaped
-3. The optimized query is properly formatted
-4. SQL keywords are in UPPERCASE
-5. Each major clause is on a new line"""
-
     # Use GPT-4 for better analysis
-    response = client.chat.completions.create(
-        model="gpt-4-turbo-preview",  # Using the latest GPT-4 model
-        messages=[
-            {"role": "system", "content": "You are an expert SQL optimization engine with deep understanding of database internals, query planning, and performance tuning. Always provide responses in valid JSON format with properly escaped strings."},
-            {"role": "user", "content": prompt}
-        ],
-        temperature=0.1,  # Lower temperature for more focused responses
-        max_tokens=2000
-    )
-    
     try:
-        # First try to parse the JSON response
-        result = json.loads(response.choices[0].message.content)
+        response = client.chat.completions.create(
+            model="gpt-4-turbo-preview",
+            messages=[
+                {
+                    "role": "system",
+                    "content": "You are an expert SQL optimization engine. Always respond with valid JSON containing a properly formatted SQL query."
+                },
+                {
+                    "role": "user",
+                    "content": "\n".join(context)
+                }
+            ],
+            temperature=0.1,
+            max_tokens=2000,
+            response_format={"type": "json_object"}  # Force JSON response
+        )
         
-        # Format the optimized query if present
-        if "optimized_query" in result:
-            # Ensure proper SQL formatting
-            formatted_query = format_sql_query(result["optimized_query"])
-            result["optimized_query"] = formatted_query
-        
-        # Validate and enhance the response
-        if result["optimized_query"].strip() == query.strip():
-            result.update({
-                "estimated_improvement": "0%",
-                "confidence": "high",
-                "changes_made": ["No changes needed - query appears to be already optimized"],
-                "warnings": ["No optimization opportunities identified"],
-                "validation_steps": ["Query is already well-optimized, no validation needed"]
-            })
-        else:
-            # Add validation steps if not present
-            if "validation_steps" not in result:
-                result["validation_steps"] = [
-                    "Compare execution plans of original and optimized queries",
-                    "Test with representative data volumes",
-                    "Monitor resource utilization",
-                    "Verify result consistency"
-                ]
-        
-        return result
-    except json.JSONDecodeError as e:
-        # If JSON parsing fails, try to extract and format the query
+        # Parse the response
         try:
-            content = response.choices[0].message.content
-            # Try to extract query between SQL keywords
-            query_match = re.search(r'SELECT.*?(?:;|$)', content, re.DOTALL | re.IGNORECASE)
-            if query_match:
-                extracted_query = format_sql_query(query_match.group(0))
-            else:
-                extracted_query = query  # Fall back to original query
+            result = json.loads(response.choices[0].message.content)
             
-            return {
-                "optimized_query": extracted_query,
-                "index_suggestions": [],
-                "optimization_reasoning": "Error parsing optimization response. Extracted query from response.",
-                "estimated_improvement": "0%",
-                "confidence": "low",
-                "changes_made": [],
-                "warnings": ["Optimization analysis failed, but query was extracted"],
-                "validation_steps": ["Manual review required"]
-            }
-        except Exception:
-            return {
-                "optimized_query": query,
-                "index_suggestions": [],
-                "optimization_reasoning": f"Error parsing optimization response: {str(e)}",
-                "estimated_improvement": "0%",
-                "confidence": "low",
-                "changes_made": [],
-                "warnings": ["Optimization analysis failed"],
-                "validation_steps": ["Manual review required"]
-            }
+            # Validate and clean the optimized query
+            if "optimized_query" in result:
+                result["optimized_query"] = format_sql_query(result["optimized_query"])
+            
+            # Ensure all required fields are present
+            result.setdefault("analysis", {
+                "complexity": "Analysis not available",
+                "bottlenecks": [],
+                "data_access_patterns": "Not analyzed",
+                "resource_usage": "Not analyzed"
+            })
+            result.setdefault("changes_made", [])
+            result.setdefault("estimated_improvement", "0%")
+            result.setdefault("confidence", "low")
+            result.setdefault("warnings", [])
+            result.setdefault("validation_steps", [
+                "Compare execution plans",
+                "Test with representative data",
+                "Monitor resource usage",
+                "Verify results"
+            ])
+            
+            # If no optimization was performed
+            if result["optimized_query"].strip() == cleaned_query.strip():
+                result.update({
+                    "estimated_improvement": "0%",
+                    "confidence": "high",
+                    "changes_made": ["No changes needed - query appears to be already optimized"],
+                    "warnings": ["No optimization opportunities identified"],
+                    "validation_steps": ["Query is already well-optimized"]
+                })
+            
+            return result
+            
+        except json.JSONDecodeError:
+            # Try to extract query from non-JSON response
+            extracted_query = extract_sql_from_text(response.choices[0].message.content)
+            if extracted_query:
+                formatted_query = format_sql_query(extracted_query)
+                return create_fallback_response(formatted_query, "Extracted query from non-JSON response")
+            else:
+                return create_fallback_response(cleaned_query, "Could not parse optimization response")
+                
     except Exception as e:
-        return {
-            "optimized_query": query,
-            "index_suggestions": [],
-            "optimization_reasoning": f"Optimization error: {str(e)}",
-            "estimated_improvement": "0%",
-            "confidence": "low",
-            "changes_made": [],
-            "warnings": ["Optimization process failed"],
-            "validation_steps": ["Manual review required"]
-        }
+        return create_fallback_response(cleaned_query, f"Optimization error: {str(e)}")
+
+def clean_sql_query(query: str) -> str:
+    """Clean and normalize a SQL query."""
+    # Remove multiple whitespace
+    query = ' '.join(query.split())
+    
+    # Ensure proper spacing around operators
+    operators = ['=', '<', '>', '<=', '>=', '<>', '!=', '+', '-', '*', '/', '%']
+    for op in operators:
+        query = query.replace(op, f' {op} ')
+    
+    # Clean up spacing around parentheses
+    query = re.sub(r'\(\s+', '(', query)
+    query = re.sub(r'\s+\)', ')', query)
+    
+    # Ensure single space after commas
+    query = re.sub(r',\s*', ', ', query)
+    
+    return query.strip()
+
+def extract_sql_from_text(text: str) -> str:
+    """Extract a SQL query from text content."""
+    # Try to find SQL between markdown code blocks
+    sql_match = re.search(r'```sql\s*(.*?)\s*```', text, re.DOTALL | re.IGNORECASE)
+    if sql_match:
+        return sql_match.group(1).strip()
+    
+    # Try to find SQL between quotes in JSON-like text
+    sql_match = re.search(r'"optimized_query":\s*"(.*?)"', text, re.DOTALL)
+    if sql_match:
+        return sql_match.group(1).strip()
+    
+    # Try to find anything that looks like a SQL query
+    sql_match = re.search(r'SELECT\s+.*?(?:;|$)', text, re.DOTALL | re.IGNORECASE)
+    if sql_match:
+        return sql_match.group(0).strip()
+    
+    return ""
+
+def create_fallback_response(query: str, error_message: str) -> dict:
+    """Create a fallback response when optimization fails."""
+    return {
+        "optimized_query": format_sql_query(query),
+        "analysis": {
+            "complexity": "Analysis failed",
+            "bottlenecks": ["Analysis not available due to error"],
+            "data_access_patterns": "Not analyzed",
+            "resource_usage": "Not analyzed"
+        },
+        "changes_made": [],
+        "estimated_improvement": "0%",
+        "confidence": "low",
+        "warnings": [error_message],
+        "validation_steps": ["Manual review required"],
+        "optimization_reasoning": error_message
+    }
 
 def format_sql_query(query: str) -> str:
     """Format a SQL query with proper capitalization and indentation."""
