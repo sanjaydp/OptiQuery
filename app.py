@@ -801,329 +801,6 @@ with st.sidebar:
             "show_query_metrics": st.checkbox("Show Query Metrics", True)
         }
 
-# Natural Language to SQL Section
-st.markdown("### 🗣️ Convert Natural Language to SQL Query")
-nl_query = st.text_area(
-    "Enter your query in natural language here:",
-    height=100,
-    help="Describe what you want to query in plain English"
-)
-
-if st.button("🔍 Convert to SQL", key="convert_nl"):
-    if nl_query.strip():
-        with st.spinner("Generating SQL..."):
-            sql_query = nl_to_sql(nl_query)
-        st.subheader("✅ Generated SQL Query:")
-        st.code(sql_query, language="sql")
-        
-        # Add button to use this query
-        if st.button("📝 Use this Query"):
-            st.session_state.current_query = sql_query
-    else:
-        st.warning("Please enter a natural language query.")
-
-# Database Connection Section
-st.markdown("### 📊 Database Connection")
-uploaded_file = st.file_uploader(
-    "Upload your SQLite Database File",
-    type=["db"],
-    help="Upload a SQLite database file to analyze"
-)
-
-if uploaded_file:
-    try:
-        # Save uploaded database
-        db_path = f"temp_{uploaded_file.name}"
-        with open(db_path, "wb") as f:
-            f.write(uploaded_file.read())
-        
-        # Validate database
-        try:
-            conn = sqlite3.connect(db_path)
-            cursor = conn.cursor()
-            cursor.execute("SELECT sqlite_version();")
-            version = cursor.fetchone()
-            if not version:
-                raise Exception("Invalid SQLite database file")
-            conn.close()
-            
-            # Store database path in session state
-            st.session_state.db_path = db_path
-            
-            # Show success message
-            st.markdown(
-                '<div class="success-message">✅ Database uploaded successfully!</div>',
-                unsafe_allow_html=True
-            )
-            
-            # Extract and display schema
-            schema_info = extract_schema_summary(db_path)
-            if schema_info:
-                st.session_state.schema_summary = schema_info
-                
-                # Schema Section
-                st.markdown("#### 📑 Database Schema")
-                schema_expander = st.expander("View Schema", expanded=True)
-                with schema_expander:
-                    for line in schema_info.split('\n'):
-                        st.markdown(f"- `{line}`")
-                
-                # Sample Data Preview Section
-                st.markdown("#### 📊 Sample Data Preview")
-                preview_expander = st.expander("View Sample Data")
-                with preview_expander:
-                    conn = sqlite3.connect(db_path)
-                    cursor = conn.cursor()
-                    cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
-                    tables = cursor.fetchall()
-                    
-                    if tables:
-                        selected_table = st.selectbox(
-                            "Select a table to preview:",
-                            [table[0] for table in tables]
-                        )
-                        
-                        if selected_table:
-                            df = pd.read_sql_query(
-                                f"SELECT * FROM {selected_table} LIMIT 5",
-                                conn
-                            )
-                            st.dataframe(df)
-                            
-                            # Show table statistics
-                            cursor.execute(f"SELECT COUNT(*) FROM {selected_table}")
-                            row_count = cursor.fetchone()[0]
-                            st.markdown(f"**Total rows:** {row_count:,}")
-                    else:
-                        st.warning("No tables found in database")
-                    conn.close()
-                
-                # SQL Query Input Section
-                st.markdown("### 📝 SQL Query Input")
-                query_input_method = st.radio(
-                    "Choose input method:",
-                    ["Upload SQL File", "Paste SQL Query"]
-                )
-                
-                query = st.session_state.get('current_query', '')
-                
-                if query_input_method == "Upload SQL File":
-                    sql_file = st.file_uploader("Upload SQL File", type=["sql"])
-                    if sql_file:
-                        query = sql_file.read().decode("utf-8")
-                else:
-                    query = st.text_area(
-                        "Enter your SQL query:",
-                        value=query,
-                        height=150,
-                        help="Write your SQL query here. The schema information is shown above for reference."
-                    )
-
-                if query.strip():
-                    # Analysis Options
-                    st.markdown("### 🔍 Analysis Options")
-                    analysis_options = st.multiselect(
-                        "Choose analysis types:",
-                        ["Syntax Check", "Performance Analysis", "Index Recommendations", "Query Plan"],
-                        default=["Syntax Check", "Performance Analysis"]
-                    )
-
-                    # Add analyze button
-                    if st.button("🚀 Analyze & Optimize Query", type="primary", use_container_width=True):
-                        run_analysis(query, analysis_options, db_path)
-
-        except Exception as e:
-            st.error(f"❌ Invalid database file: {str(e)}")
-            if os.path.exists(db_path):
-                os.remove(db_path)
-            
-    except Exception as e:
-        st.error(f"❌ Error processing database file: {str(e)}")
-
-# Chat Assistant Section
-def render_chat_assistant():
-    """Render the chat assistant if optimized query is available"""
-    if not st.session_state.get("optimized_sql"):
-        return
-        
-    debug_state("Before Chat Assistant")
-    
-    with st.sidebar:
-        st.markdown("## 💬 Ask OptiQuery Assistant")
-        st.info("Ask any questions about the query, its optimization, or SQL best practices!")
-        
-        # Display chat history
-        for msg in st.session_state.get("chat_history", []):
-            role = "user" if msg["role"] == "user" else "assistant"
-            with st.chat_message(role):
-                st.markdown(msg["content"])
-        
-        # Get user question
-        user_question = st.chat_input("Ask about the query...")
-        
-        if user_question:
-            debug_state("Processing User Question")
-            
-            # Add user message to chat
-            with st.chat_message("user"):
-                st.markdown(user_question)
-            if "chat_history" not in st.session_state:
-                st.session_state.chat_history = []
-            st.session_state.chat_history.append({"role": "user", "content": user_question})
-            
-            # Generate context for the AI including full analysis results and query results
-            context = f"""
-Analysis Context:
-- Original Query: {st.session_state.get("original_query", "")}
-- Optimized Query: {st.session_state.get("optimized_sql", "")}
-- Complexity Score: {st.session_state.get("complexity_score", 0)}
-- Complexity Level: {st.session_state.get("complexity_label", "")}
-- Identified Issues: {', '.join(st.session_state.get("issues", [])) if st.session_state.get("issues") else 'None'}
-- Schema: {st.session_state.get("schema_summary", "Not available")}
-
-Query Results:
-Original Query:
-- Execution Time: {st.session_state.query_results["original"].get("execution_time")}s
-- Row Count: {st.session_state.query_results["original"].get("row_count")}
-- Error: {st.session_state.query_results["original"].get("error")}
-
-Optimized Query:
-- Execution Time: {st.session_state.query_results["optimized"].get("execution_time")}s
-- Row Count: {st.session_state.query_results["optimized"].get("row_count")}
-- Error: {st.session_state.query_results["optimized"].get("error")}
-
-Analysis Results:
-{json.dumps(st.session_state.get("analysis_results", {}), indent=2)}
-
-User Question: {user_question}
-
-Provide a clear, concise answer focusing on the specific question. If relevant, reference the query analysis results and actual query performance metrics. If there were any errors in query execution, mention those as well.
-"""
-            # Get AI response
-            with st.chat_message("assistant"):
-                with st.spinner("Thinking..."):
-                    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-                    response = client.chat.completions.create(
-                        model="gpt-3.5-turbo",
-                        messages=[
-                            {"role": "system", "content": "You are a SQL expert assistant helping users understand query optimization. Be concise but thorough."},
-                            {"role": "user", "content": context}
-                        ],
-                        temperature=0.7
-                    )
-                    answer = response.choices[0].message.content.strip()
-                    st.markdown(answer)
-                    st.session_state.chat_history.append({"role": "assistant", "content": answer})
-            
-            debug_state("After Processing User Question")
-
-# Add database connection setup UI
-def show_db_connection_form():
-    """Show database connection settings in the sidebar."""
-    with st.sidebar:
-        st.markdown("### ⚙️ Database Connection")
-        
-        # Database type selection
-        db_type = st.radio(
-            "Select Database Type:",
-            ["SQLite", "PostgreSQL"],
-            index=0 if st.session_state.get('use_sqlite', True) else 1,
-            help="Choose your database type"
-        )
-        
-        st.session_state.use_sqlite = (db_type == "SQLite")
-        
-        if st.session_state.use_sqlite:
-            # SQLite settings
-            sqlite_path = st.text_input(
-                "SQLite Database Path",
-                value=st.session_state.get('sqlite_path', 'optiquery.db'),
-                help="Path to your SQLite database file"
-            )
-            st.session_state.sqlite_path = sqlite_path
-            
-            if st.button("Initialize Sample Database"):
-                with st.spinner("Initializing database..."):
-                    initialize_sqlite_database()
-                    st.session_state.schema_summary = get_schema_summary()
-                    st.session_state.db_initialized = True
-                    st.success("✅ Sample database initialized!")
-                    st.rerun()
-                
-        else:
-            # PostgreSQL settings
-            col1, col2 = st.columns(2)
-            with col1:
-                pg_host = st.text_input(
-                    "Host",
-                    value=st.session_state.get('pg_host', 'localhost'),
-                    help="PostgreSQL host"
-                )
-                pg_database = st.text_input(
-                    "Database",
-                    value=st.session_state.get('pg_database', ''),
-                    help="PostgreSQL database name"
-                )
-                pg_user = st.text_input(
-                    "User",
-                    value=st.session_state.get('pg_user', ''),
-                    help="PostgreSQL username"
-                )
-            
-            with col2:
-                pg_port = st.number_input(
-                    "Port",
-                    value=st.session_state.get('pg_port', 5432),
-                    help="PostgreSQL port"
-                )
-                pg_password = st.text_input(
-                    "Password",
-                    type="password",
-                    value=st.session_state.get('pg_password', ''),
-                    help="PostgreSQL password"
-                )
-            
-            # Store PostgreSQL settings in session state
-            st.session_state.pg_host = pg_host
-            st.session_state.pg_port = pg_port
-            st.session_state.pg_database = pg_database
-            st.session_state.pg_user = pg_user
-            st.session_state.pg_password = pg_password
-            
-            # Test PostgreSQL connection
-            if st.button("Test Connection"):
-                with st.spinner("Testing connection..."):
-                    connection = get_database_connection()
-                    if connection:
-                        try:
-                            cursor = connection.cursor()
-                            cursor.execute("SELECT version();")
-                            version = cursor.fetchone()[0]
-                            st.success(f"✅ Connected to PostgreSQL {version}")
-                            st.session_state.db_initialized = True
-                            st.session_state.schema_summary = get_schema_summary()
-                            cursor.close()
-                            connection.close()
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"❌ Connection error: {str(e)}")
-                            st.session_state.db_initialized = False
-        
-        # OpenAI API key for AI-powered suggestions
-        st.markdown("### 🤖 AI Settings")
-        openai_key = st.text_input(
-            "OpenAI API Key (Optional)",
-            type="password",
-            value=st.session_state.get('openai_api_key', ''),
-            help="Enter your OpenAI API key for AI-powered optimization suggestions"
-        )
-        st.session_state.openai_api_key = openai_key
-        
-        # Show current database schema if available
-        if st.session_state.get('schema_summary') and st.session_state.db_initialized:
-            with st.expander("📚 Database Schema", expanded=False):
-                st.text(st.session_state.schema_summary)
-
 # Main app code
 def update_query_history(query: str, performance_metrics: dict = None):
     """Update the query history in session state."""
@@ -1255,39 +932,40 @@ def main():
     # Show database connection form in sidebar
     show_db_connection_form()
     
-    # Main query input area
-    st.markdown("### 🔍 Query Optimization")
+    # Create tabs for different functionalities
+    query_tab, nl_tab = st.tabs(["🔍 SQL Query Optimization", "🤖 Natural Language to SQL"])
     
-    # Query input method selection
-    query_input_method = st.radio(
-        "Choose input method:",
-        ["Paste SQL Query", "Upload SQL File"],
-        horizontal=True,
-        help="Select how you want to input your SQL query"
-    )
-    
-    query = None
-    
-    # Handle query input based on selected method
-    if query_input_method == "Upload SQL File":
-        # File upload section
-        uploaded_file = st.file_uploader(
-            "Upload SQL file",
-            type=['sql'],
-            help="Upload a .sql file containing your query"
+    with query_tab:
+        # Query input method selection
+        query_input_method = st.radio(
+            "Choose input method:",
+            ["Paste SQL Query", "Upload SQL File"],
+            horizontal=True,
+            help="Select how you want to input your SQL query"
         )
-        if uploaded_file:
-            try:
-                query = uploaded_file.getvalue().decode('utf-8')
-                with st.expander("📄 SQL File Contents", expanded=True):
-                    st.code(query, language='sql')
-            except Exception as e:
-                st.error(f"Error reading SQL file: {str(e)}")
-    else:
-        # Text input section
-        sample_query = ""
-        if st.session_state.db_initialized:
-            sample_query = """SELECT *
+        
+        query = None
+        
+        # Handle query input based on selected method
+        if query_input_method == "Upload SQL File":
+            # File upload section
+            uploaded_file = st.file_uploader(
+                "Upload SQL file",
+                type=['sql'],
+                help="Upload a .sql file containing your query"
+            )
+            if uploaded_file:
+                try:
+                    query = uploaded_file.getvalue().decode('utf-8')
+                    with st.expander("📄 SQL File Contents", expanded=True):
+                        st.code(query, language='sql')
+                except Exception as e:
+                    st.error(f"Error reading SQL file: {str(e)}")
+        else:
+            # Text input section
+            sample_query = ""
+            if st.session_state.db_initialized:
+                sample_query = """SELECT *
 FROM orders
 WHERE customer_id IN (
     SELECT customer_id 
@@ -1296,49 +974,90 @@ WHERE customer_id IN (
 )
 AND order_date >= '2024-01-01'
 AND order_total > 1000;"""
-        
-        query = st.text_area(
-            "Enter your SQL query:",
-            value=st.session_state.get('query', sample_query),
-            height=200,
-            help="Paste your SQL query here for optimization analysis"
-        )
-    
-    # Analysis options
-    if query:  # Only show options if we have a query
-        with st.expander("⚙️ Analysis Options", expanded=False):
-            col1, col2 = st.columns(2)
-            with col1:
-                run_syntax_check = st.checkbox(
-                    "Syntax Check",
-                    value=True,
-                    help="Check SQL syntax before execution"
-                )
-            with col2:
-                run_performance = st.checkbox(
-                    "Performance Analysis",
-                    value=True,
-                    help="Analyze query performance and suggest optimizations"
-                )
-        
-        # Store query in session state
-        st.session_state.query = query
-        
-        col1, col2 = st.columns([1, 4])
-        with col1:
-            run_optimization = st.button(
-                "Analyze & Optimize",
-                type="primary",
-                help="Run selected analysis on the query",
-                disabled=not st.session_state.db_initialized
+            
+            query = st.text_area(
+                "Enter your SQL query:",
+                value=st.session_state.get('query', sample_query),
+                height=200,
+                help="Paste your SQL query here for optimization analysis"
             )
         
-        if not st.session_state.db_initialized:
-            st.warning("⚠️ Please initialize or connect to a database first")
+        # Analysis options
+        if query:  # Only show options if we have a query
+            with st.expander("⚙️ Analysis Options", expanded=False):
+                col1, col2 = st.columns(2)
+                with col1:
+                    run_syntax_check = st.checkbox(
+                        "Syntax Check",
+                        value=True,
+                        help="Check SQL syntax before execution"
+                    )
+                with col2:
+                    run_performance = st.checkbox(
+                        "Performance Analysis",
+                        value=True,
+                        help="Analyze query performance and suggest optimizations"
+                    )
+            
+            # Store query in session state
+            st.session_state.query = query
+            
+            col1, col2 = st.columns([1, 4])
+            with col1:
+                run_optimization = st.button(
+                    "Analyze & Optimize",
+                    type="primary",
+                    help="Run selected analysis on the query",
+                    disabled=not st.session_state.db_initialized
+                )
+            
+            if not st.session_state.db_initialized:
+                st.warning("⚠️ Please initialize or connect to a database first")
+            
+            if run_optimization and st.session_state.db_initialized:
+                with st.spinner("Analyzing query..."):
+                    analyze_query(query, run_syntax_check, run_performance)
+    
+    with nl_tab:
+        st.markdown("### Convert Natural Language to SQL")
+        nl_query = st.text_area(
+            "Enter your query in natural language:",
+            placeholder="Example: Show me all orders from customers in the North region after January 2024 with total over $1000",
+            help="Describe what you want to query in plain English"
+        )
         
-        if run_optimization and st.session_state.db_initialized:
-            with st.spinner("Analyzing query..."):
-                analyze_query(query, run_syntax_check, run_performance)
+        if nl_query:
+            if st.button("Convert to SQL", type="primary"):
+                if not st.session_state.get('openai_api_key'):
+                    st.error("⚠️ Please provide an OpenAI API key in the sidebar to use this feature")
+                else:
+                    with st.spinner("Converting to SQL..."):
+                        try:
+                            # Get schema information for context
+                            schema_info = st.session_state.get('schema_summary', '')
+                            
+                            # Call OpenAI API
+                            response = openai.ChatCompletion.create(
+                                model="gpt-3.5-turbo",
+                                messages=[
+                                    {"role": "system", "content": f"You are a SQL expert. Convert natural language queries to SQL based on this schema:\n{schema_info}"},
+                                    {"role": "user", "content": f"Convert this to SQL:\n{nl_query}"}
+                                ]
+                            )
+                            
+                            # Extract SQL from response
+                            sql_query = response.choices[0].message.content
+                            
+                            # Display the result
+                            st.code(sql_query, language='sql')
+                            
+                            # Add button to use this query
+                            if st.button("Use this query"):
+                                st.session_state.query = sql_query
+                                st.rerun()
+                                
+                        except Exception as e:
+                            st.error(f"Error converting to SQL: {str(e)}")
     
     # Add Query History View in Sidebar
     with st.sidebar:
