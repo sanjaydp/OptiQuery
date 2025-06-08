@@ -293,14 +293,16 @@ def display_query_results():
                 help="Median execution time over multiple runs"
             )
         with col2:
+            min_time = st.session_state.query_results['original'].get('min_time')
             st.metric(
                 "Min Time",
-                f"{st.session_state.query_results['original'].get('min_time', 'N/A')}s"
+                f"{min_time}s" if min_time is not None else "N/A"
             )
         with col3:
+            max_time = st.session_state.query_results['original'].get('max_time')
             st.metric(
                 "Max Time",
-                f"{st.session_state.query_results['original'].get('max_time', 'N/A')}s"
+                f"{max_time}s" if max_time is not None else "N/A"
             )
 
     if st.session_state.query_results["optimized"]["data"] is not None:
@@ -315,21 +317,26 @@ def display_query_results():
             opt_time = st.session_state.query_results["optimized"]["execution_time"]
             if orig_time and opt_time:
                 improvement = ((orig_time - opt_time) / orig_time * 100)
+                # Only show improvement if optimized query is actually faster
+                delta = f"{improvement:.1f}%" if improvement > 0 else f"{-improvement:.1f}% slower"
+                delta_color = "normal" if improvement > 0 else "inverse"
                 st.metric(
                     "Optimized Execution Time",
                     f"{opt_time}s",
-                    delta=f"{improvement:.1f}%",
-                    delta_color="inverse"
+                    delta=delta,
+                    delta_color=delta_color
                 )
         with col2:
+            min_time = st.session_state.query_results['optimized'].get('min_time')
             st.metric(
                 "Min Time",
-                f"{st.session_state.query_results['optimized'].get('min_time', 'N/A')}s"
+                f"{min_time}s" if min_time is not None else "N/A"
             )
         with col3:
+            max_time = st.session_state.query_results['optimized'].get('max_time')
             st.metric(
                 "Max Time",
-                f"{st.session_state.query_results['optimized'].get('max_time', 'N/A')}s"
+                f"{max_time}s" if max_time is not None else "N/A"
             )
         
         # Show optimization confidence and warnings
@@ -347,8 +354,11 @@ def display_query_results():
                 st.markdown(f"**Confidence Level:** {confidence_color} {confidence}")
             
             with col2:
+                # Compare estimated vs actual improvement
                 estimated = performance_results.get("estimated_improvement", "N/A")
+                actual = f"{improvement:.1f}%" if orig_time and opt_time else "N/A"
                 st.markdown(f"**Estimated Improvement:** {estimated}")
+                st.markdown(f"**Actual Improvement:** {actual}")
             
             # Show changes made
             changes = performance_results.get("changes_made", [])
@@ -363,6 +373,14 @@ def display_query_results():
                 st.markdown("**⚠️ Warnings:**")
                 for warning in warnings:
                     st.warning(warning)
+                
+            # Add warning if actual performance is worse than original
+            if orig_time and opt_time and opt_time > orig_time:
+                st.warning("⚠️ The optimized query is currently performing slower than the original query. This might be due to:\n" +
+                          "- Small data set where optimization overhead exceeds benefits\n" +
+                          "- Database caching effects\n" +
+                          "- Need for index creation\n" +
+                          "Consider running the analysis multiple times or with a larger dataset.")
     
     debug_state("After Displaying Results")
 
