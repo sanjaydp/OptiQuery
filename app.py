@@ -1064,17 +1064,19 @@ def main():
         st.session_state.query_history = []
     if 'query' not in st.session_state:
         st.session_state.query = ""
+    if 'chat_messages' not in st.session_state:
+        st.session_state.chat_messages = []
     
     # Show database connection form in sidebar
     show_db_connection_form()
     
-    # Only show query interface if database is initialized
+    # Only show interface if database is initialized
     if not st.session_state.db_initialized:
         st.info("👆 Please connect to a database using the sidebar options first.")
         return
         
     # Create tabs for different functionalities
-    query_tab, nl_tab = st.tabs(["🔍 SQL Query Optimization", "🤖 Natural Language to SQL"])
+    query_tab, nl_tab, chat_tab = st.tabs(["🔍 SQL Query Optimization", "🤖 Natural Language to SQL", "💬 Chat"])
     
     with query_tab:
         # Query input method selection
@@ -1188,6 +1190,72 @@ AND order_total > 1000;"""
                         except Exception as e:
                             st.error(f"Error converting to SQL: {str(e)}")
     
+    with chat_tab:
+        st.markdown("### SQL Assistant Chat")
+        
+        # Display chat messages
+        for message in st.session_state.chat_messages:
+            with st.chat_message(message["role"]):
+                st.markdown(message["content"])
+        
+        # Chat input
+        if prompt := st.chat_input("Ask a follow-up question about your queries..."):
+            # Add user message to chat history
+            st.session_state.chat_messages.append({"role": "user", "content": prompt})
+            
+            # Display user message
+            with st.chat_message("user"):
+                st.markdown(prompt)
+            
+            # Get context from query history
+            query_context = ""
+            if st.session_state.query_history:
+                recent_queries = st.session_state.query_history[:3]  # Get 3 most recent queries
+                query_context = "\n\n".join([
+                    f"Query {i+1}:\n{q['query']}" 
+                    for i, q in enumerate(recent_queries)
+                ])
+            
+            # Get schema context
+            schema_context = st.session_state.get('schema_summary', '')
+            
+            try:
+                with st.chat_message("assistant"):
+                    with st.spinner("Thinking..."):
+                        # Call OpenAI API
+                        client = openai.OpenAI(api_key=st.session_state.openai_api_key)
+                        response = client.chat.completions.create(
+                            model="gpt-3.5-turbo",
+                            messages=[
+                                {"role": "system", "content": f"""You are a SQL expert assistant. Help users understand and improve their SQL queries.
+                                
+Current database schema:
+{schema_context}
+
+Recent queries:
+{query_context}
+
+Provide clear, specific answers and include example SQL queries when relevant."""},
+                                *[{"role": m["role"], "content": m["content"]} for m in st.session_state.chat_messages]
+                            ]
+                        )
+                        
+                        # Get and display response
+                        assistant_response = response.choices[0].message.content
+                        st.markdown(assistant_response)
+                        
+                        # Add assistant response to chat history
+                        st.session_state.chat_messages.append({"role": "assistant", "content": assistant_response})
+            except Exception as e:
+                st.error(f"Error: {str(e)}")
+                if "API key" in str(e):
+                    st.error("Please provide an OpenAI API key in the sidebar to use the chat feature.")
+        
+        # Add a clear chat button
+        if st.session_state.chat_messages and st.button("Clear Chat History"):
+            st.session_state.chat_messages = []
+            st.rerun()
+
     # Add Query History View in Sidebar
     with st.sidebar:
         if st.session_state.get('query_history', []):
