@@ -283,26 +283,86 @@ def display_query_results():
     if st.session_state.query_results["original"]["data"] is not None:
         st.markdown("#### 📊 Original Query Results")
         st.dataframe(pd.DataFrame(st.session_state.query_results["original"]["data"]))
-        st.metric(
-            "Original Execution Time",
-            f"{st.session_state.query_results['original']['execution_time']}s"
-        )
+        
+        # Show detailed timing metrics
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric(
+                "Original Execution Time",
+                f"{st.session_state.query_results['original']['execution_time']}s",
+                help="Median execution time over multiple runs"
+            )
+        with col2:
+            st.metric(
+                "Min Time",
+                f"{st.session_state.query_results['original'].get('min_time', 'N/A')}s"
+            )
+        with col3:
+            st.metric(
+                "Max Time",
+                f"{st.session_state.query_results['original'].get('max_time', 'N/A')}s"
+            )
 
     if st.session_state.query_results["optimized"]["data"] is not None:
         st.markdown("#### 🚀 Optimized Query Results")
         st.dataframe(pd.DataFrame(st.session_state.query_results["optimized"]["data"]))
         
-        # Calculate improvement percentage
-        orig_time = st.session_state.query_results["original"]["execution_time"]
-        opt_time = st.session_state.query_results["optimized"]["execution_time"]
-        if orig_time and opt_time:
-            improvement = ((orig_time - opt_time) / orig_time * 100)
+        # Show detailed timing metrics for optimized query
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            # Calculate improvement percentage
+            orig_time = st.session_state.query_results["original"]["execution_time"]
+            opt_time = st.session_state.query_results["optimized"]["execution_time"]
+            if orig_time and opt_time:
+                improvement = ((orig_time - opt_time) / orig_time * 100)
+                st.metric(
+                    "Optimized Execution Time",
+                    f"{opt_time}s",
+                    delta=f"{improvement:.1f}%",
+                    delta_color="inverse"
+                )
+        with col2:
             st.metric(
-                "Optimized Execution Time",
-                f"{opt_time}s",
-                delta=f"{improvement:.1f}%",
-                delta_color="inverse"
+                "Min Time",
+                f"{st.session_state.query_results['optimized'].get('min_time', 'N/A')}s"
             )
+        with col3:
+            st.metric(
+                "Max Time",
+                f"{st.session_state.query_results['optimized'].get('max_time', 'N/A')}s"
+            )
+        
+        # Show optimization confidence and warnings
+        performance_results = st.session_state.analysis_results.get("performance", {})
+        if performance_results:
+            st.markdown("#### 📈 Optimization Analysis")
+            col1, col2 = st.columns(2)
+            with col1:
+                confidence = performance_results.get("confidence", "N/A")
+                confidence_color = {
+                    "high": "🟢",
+                    "medium": "🟡",
+                    "low": "🔴"
+                }.get(confidence.lower(), "⚪")
+                st.markdown(f"**Confidence Level:** {confidence_color} {confidence}")
+            
+            with col2:
+                estimated = performance_results.get("estimated_improvement", "N/A")
+                st.markdown(f"**Estimated Improvement:** {estimated}")
+            
+            # Show changes made
+            changes = performance_results.get("changes_made", [])
+            if changes:
+                st.markdown("**Changes Made:**")
+                for change in changes:
+                    st.markdown(f"- {change}")
+            
+            # Show warnings
+            warnings = performance_results.get("warnings", [])
+            if warnings:
+                st.markdown("**⚠️ Warnings:**")
+                for warning in warnings:
+                    st.warning(warning)
     
     debug_state("After Displaying Results")
 
