@@ -278,7 +278,7 @@ if "db_path" in st.session_state:
             help="Write your SQL query here. The schema information is shown above for reference."
         )
 
-    # Only show analysis options if we have a query
+    # Show analysis options and button if we have a query
     if query and query.strip():
         st.session_state.original_query = query
         
@@ -290,7 +290,10 @@ if "db_path" in st.session_state:
             default=["Syntax Check", "Performance Analysis"]
         )
 
-        if st.button("🚀 Analyze & Optimize Query"):
+        # Add a clear analyze button
+        analyze_button = st.button("🚀 Analyze & Optimize Query", type="primary", use_container_width=True)
+
+        if analyze_button:
             # Collect table statistics
             table_stats = {}
             try:
@@ -315,10 +318,13 @@ if "db_path" in st.session_state:
             except Exception as e:
                 st.error(f"Error collecting table statistics: {str(e)}")
 
-            # Perform selected analyses
-            with st.spinner("Analyzing query..."):
+            # Show progress
+            with st.spinner("🔍 Analyzing your query..."):
+                progress_bar = st.progress(0)
+                
                 # 1. Syntax Check
                 if "Syntax Check" in analysis_options:
+                    progress_bar.progress(20)
                     st.markdown("#### 📝 Query Analysis")
                     analysis_result = analyze_sql(query)
                     
@@ -335,6 +341,8 @@ if "db_path" in st.session_state:
                         st.markdown("**💡 Optimization Suggestions:**")
                         for suggestion in analysis_result["suggestions"]:
                             st.info(suggestion)
+                    
+                    progress_bar.progress(40)
                     
                     # Display complexity analysis
                     complexity = analysis_result["complexity"]
@@ -371,6 +379,8 @@ if "db_path" in st.session_state:
                         ]
                     })
                     st.dataframe(factor_df, hide_index=True)
+                    
+                    progress_bar.progress(60)
 
                 # 2. Performance Analysis & Optimization
                 if "Performance Analysis" in analysis_options:
@@ -382,6 +392,8 @@ if "db_path" in st.session_state:
                         schema_info=st.session_state.schema_summary,
                         table_stats=table_stats
                     )
+                    
+                    progress_bar.progress(80)
                     
                     # Store optimized query in session state
                     st.session_state.optimized_sql = optimization_result["optimized_query"]
@@ -400,31 +412,8 @@ if "db_path" in st.session_state:
                         value=optimization_result["estimated_improvement"]
                     )
 
-                # 3. Index Recommendations
-                if "Index Recommendations" in analysis_options:
-                    st.markdown("#### 📊 Index Recommendations")
-                    if "index_suggestions" in optimization_result:
-                        for idx in optimization_result["index_suggestions"]:
-                            st.markdown(f"- {idx}")
-                    else:
-                        st.info("No index recommendations available")
-
-                # 4. Query Plan Analysis
-                if "Query Plan" in analysis_options:
-                    st.markdown("#### 🔍 Query Execution Plan")
-                    try:
-                        explain_plan = explain_sql_with_plan(query)
-                        explain_plan_df = parse_explain_plan(explain_plan)
-                        st.dataframe(explain_plan_df)
-                        
-                        # Show plan-based suggestions
-                        plan_suggestions = suggest_based_on_explain_plan(explain_plan_df)
-                        if plan_suggestions:
-                            st.markdown("**Suggestions based on execution plan:**")
-                            for suggestion in plan_suggestions:
-                                st.markdown(f"- {suggestion}")
-                    except Exception as e:
-                        st.error(f"Error analyzing query plan: {str(e)}")
+                progress_bar.progress(100)
+                st.success("✅ Analysis Complete!")
 
         if st.session_state.optimized_sql.strip():
             st.subheader("📌 Identified Issues")
