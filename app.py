@@ -550,6 +550,18 @@ def get_query_plan(connection, query: str) -> str:
     finally:
         cursor.close()
 
+def display_sql_with_copy(sql_code: str, key_suffix: str = ""):
+    """Display a SQL code block with a copy button."""
+    container = st.container()
+    with container:
+        col1, col2 = st.columns([20, 1])
+        with col1:
+            st.code(sql_code, language='sql')
+        with col2:
+            if st.button("📋", key=f"copy_{key_suffix}_{hash(sql_code)}", help="Copy to query editor"):
+                st.session_state.query = sql_code
+                st.rerun()
+
 def optimize_query(query: str) -> str:
     """Get optimization suggestions for the query using OpenAI."""
     try:
@@ -604,10 +616,17 @@ Focus on:
 3. Potential issues
 4. Index recommendations
 
-For each optimization suggestion that includes a query, wrap the SQL code in triple backticks with sql language specification like this:
-```sql
+When providing SQL examples, format them exactly like this:
+
+[SQL]
 SELECT * FROM table;
-```
+[/SQL]
+
+For index recommendations, format them like this:
+
+[SQL]
+CREATE INDEX idx_name ON table(column);
+[/SQL]
 
 Database Schema:
 {schema}
@@ -630,63 +649,18 @@ Please provide specific, actionable recommendations with example queries where r
             ]
         )
         
-        # Extract and process the optimization suggestions
-        suggestions = response.choices[0].message.content
+        # Process the response
+        content = response.choices[0].message.content
         
-        # Initialize a counter for unique button keys
-        if 'button_count' not in st.session_state:
-            st.session_state.button_count = 0
+        # Split content and process each part
+        parts = re.split(r'\[SQL\](.*?)\[/SQL\]', content, flags=re.DOTALL)
         
-        def display_sql_block(sql_code: str):
-            """Display a SQL code block with a copy button."""
-            # Increment button counter for unique key
-            st.session_state.button_count += 1
-            button_key = f"copy_button_{st.session_state.button_count}"
-            
-            # Create columns for code and button
-            cols = st.columns([12, 1])
-            
-            # Display code in the first column
-            with cols[0]:
-                st.code(sql_code, language='sql')
-            
-            # Display copy button in the second column
-            with cols[1]:
-                if st.button("📋", key=button_key, help="Copy to query editor"):
-                    st.session_state.query = sql_code
-                    st.rerun()
-        
-        # Split content into text and code blocks
-        import re
-        
-        # First, handle any SQL blocks that use ```sql format
-        parts = re.split(r'(```sql[\s\S]*?```)', suggestions)
-        
-        for part in parts:
-            if part.startswith('```sql'):
-                # Extract SQL code without the markers
-                sql_code = part.replace('```sql', '').replace('```', '').strip()
-                display_sql_block(sql_code)
-            else:
-                # Look for SQL statements that might not be properly wrapped
-                # This handles cases where the AI might not have properly formatted the SQL
-                sql_matches = re.finditer(r'(?m)^(?:SELECT|CREATE|INSERT|UPDATE|DELETE|ALTER|DROP|MERGE|WITH)\s+.*?;', part, re.IGNORECASE | re.MULTILINE)
-                
-                last_end = 0
-                for match in sql_matches:
-                    # Output any text before this SQL block
-                    if match.start() > last_end:
-                        st.markdown(part[last_end:match.start()])
-                    
-                    # Display the SQL block with copy button
-                    sql_code = match.group().strip()
-                    display_sql_block(sql_code)
-                    
-                    last_end = match.end()
-                
-                # Output any remaining text
-                if last_end < len(part):
-                    st.markdown(part[last_end:])
+        for i, part in enumerate(parts):
+            if i % 2 == 0:  # Text content
+                st.markdown(part.strip())
+            else:  # SQL content
+                sql_code = part.strip()
+                display_sql_with_copy(sql_code, f"opt_{i}")
         
         return ""
         
@@ -843,126 +817,55 @@ def update_query_history(query: str, performance_metrics: dict = None):
     st.session_state.query_history.insert(0, history_entry)
     st.session_state.query_history = st.session_state.query_history[:10]
 
-def analyze_query(query: str, run_syntax_check: bool = True, run_performance: bool = True) -> bool:
-    """Analyze and optimize the SQL query."""
+def analyze_query(query: str, perform_syntax_check: bool = True, perform_analysis: bool = True) -> str:
+    """Analyze the SQL query for syntax and performance."""
     try:
-        # Syntax check if enabled
-        if run_syntax_check:
-            st.markdown("#### 🔍 Syntax Check")
-            try:
-                connection = get_database_connection()
-                if connection:
-                    try:
-                        cursor = connection.cursor()
-                        try:
-                            # Try parsing the query without executing
-                            if st.session_state.get('use_sqlite', True):
-                                cursor.execute(f"EXPLAIN {query}")
-                            else:
-                                cursor.execute(f"EXPLAIN (FORMAT JSON) {query}")
-                            cursor.fetchall()
-                            st.success("✅ SQL syntax is valid")
-                        finally:
-                            cursor.close()
-                    finally:
-                        connection.close()
-            except Exception as e:
-                st.error("❌ SQL syntax error:")
-                st.error(str(e))
-                return False
-        
-        # Performance analysis if enabled
-        performance_metrics = {}
-        if run_performance:
-            st.markdown("#### 🚀 Performance Analysis")
-            
-            # Get optimization suggestions
-            optimization_result = optimize_query(query)
-            st.markdown(optimization_result)
-            
-            # Collect performance metrics
-            connection = get_database_connection()
-            if connection:
+        connection = get_database_connection()
+        if not connection:
+            return "❌ No database connection available. Please connect to a database first."
+
+        cursor = connection.cursor()
+        results = []
+
+        try:
+            if perform_syntax_check:
+                st.markdown("### Syntax Check")
                 try:
-                    cursor = connection.cursor()
-                    try:
-                        # Get execution time
-                        execution_times = measure_query_execution_time(connection, query)
-                        if execution_times:
-                            median_time = statistics.median(execution_times)
-                            performance_metrics['median_time'] = format_time(median_time)
-                        
-                        # Get result size and handle duplicate column names
-                        cursor.execute(query)
-                        results = cursor.fetchall()
-                        performance_metrics['row_count'] = len(results)
-                        
-                        # Get column names and handle duplicates
-                        if st.session_state.get('use_sqlite', True):
-                            # For SQLite, get table info from the query plan
-                            cursor.execute(f"EXPLAIN QUERY PLAN {query}")
-                            plan = cursor.fetchall()
-                            tables = {}
-                            for row in plan:
-                                if 'SCAN' in row[3]:
-                                    table_name = row[3].split()[-1].strip('[]')
-                                    tables[table_name] = True
-                            
-                            # Get column descriptions
-                            cursor.execute(query)
-                            descriptions = cursor.description
-                            columns = []
-                            seen_columns = set()
-                            
-                            for desc in descriptions:
-                                col_name = desc[0]
-                                if col_name in seen_columns:
-                                    # If duplicate, try to find the table name
-                                    for table in tables:
-                                        qualified_name = f"{table}.{col_name}"
-                                        if qualified_name not in seen_columns:
-                                            columns.append(qualified_name)
-                                            seen_columns.add(qualified_name)
-                                            break
-                                    else:
-                                        # If no table found, append with a unique suffix
-                                        suffix = 1
-                                        while f"{col_name}_{suffix}" in seen_columns:
-                                            suffix += 1
-                                        columns.append(f"{col_name}_{suffix}")
-                                        seen_columns.add(f"{col_name}_{suffix}")
-                                else:
-                                    columns.append(col_name)
-                                    seen_columns.add(col_name)
-                        else:
-                            # For PostgreSQL, column names already include table names
-                            columns = [desc.name for desc in cursor.description]
-                        
-                        # Show results
-                        df = pd.DataFrame(results, columns=columns)
-                        with st.expander("🔍 Query Results", expanded=True):
-                            st.dataframe(
-                                df,
-                                use_container_width=True,
-                                hide_index=True
-                            )
-                            st.caption(f"Showing {len(df)} rows")
-                    finally:
-                        cursor.close()
+                    cursor.execute(f"EXPLAIN {query}")
+                    st.success("✅ Query syntax is valid")
+                    display_sql_with_copy(query, "syntax_valid")
                 except Exception as e:
-                    st.error(f"Error executing query: {str(e)}")
-                    return False
-                finally:
-                    connection.close()
-        
-        # Update query history
-        update_query_history(query, performance_metrics)
-        return True
-        
+                    st.error(f"❌ Syntax error: {str(e)}")
+                    return ""
+
+            if perform_analysis:
+                st.markdown("### Performance Analysis")
+                
+                # Get the execution plan
+                cursor.execute(f"EXPLAIN QUERY PLAN {query}")
+                plan = cursor.fetchall()
+                
+                if plan:
+                    st.markdown("#### Execution Plan")
+                    plan_text = "\n".join([str(row) for row in plan])
+                    st.code(plan_text)
+                    
+                    # Display the original query with copy button
+                    st.markdown("#### Original Query")
+                    display_sql_with_copy(query, "perf_original")
+
+                    # Get optimization suggestions
+                    st.markdown("#### Optimization Suggestions")
+                    optimize_query(query)
+
+        finally:
+            cursor.close()
+            connection.close()
+
+        return ""
+
     except Exception as e:
-        st.error("❌ Error during analysis:")
-        st.error(str(e))
-        return False
+        return f"❌ Error during analysis: {str(e)}"
 
 def format_time(seconds: float) -> str:
     """Format time in seconds to a human-readable string."""
