@@ -556,17 +556,21 @@ def display_sql_with_copy(sql_code: str, key_suffix: str = ""):
     col1, col2, col3 = st.columns([1, 15, 1])
     with col1:
         button_key = f"copy_{key_suffix}_{hash(sql_code)}"
-        if button_key not in st.session_state:
-            st.session_state[button_key] = False
+        copy_status_key = f"copy_status_{key_suffix}_{hash(sql_code)}"
+        
+        # Initialize the copy status in session state if not present
+        if copy_status_key not in st.session_state:
+            st.session_state[copy_status_key] = False
             
         if st.button("📋 Copy SQL", key=button_key, help="Copy to query editor"):
             st.session_state.query = sql_code
-            st.session_state[button_key] = True
-            
-        if st.session_state[button_key]:
+            st.session_state[copy_status_key] = True
+        
+        # Show success message if copy was performed
+        if st.session_state[copy_status_key]:
             st.success("Copied to editor!")
-            # Reset the state after showing success message
-            st.session_state[button_key] = False
+            # Reset the status after showing the message
+            st.session_state[copy_status_key] = False
 
 def optimize_query(query: str) -> str:
     """Get optimization suggestions for the query using OpenAI."""
