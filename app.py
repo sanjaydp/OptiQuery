@@ -633,30 +633,62 @@ Please provide specific, actionable recommendations with example queries where r
         # Extract and process the optimization suggestions
         suggestions = response.choices[0].message.content
         
-        # Process the response to add copy buttons for SQL code blocks
+        # Initialize a counter for unique button keys
+        if 'button_count' not in st.session_state:
+            st.session_state.button_count = 0
+        
+        def display_sql_block(sql_code: str):
+            """Display a SQL code block with a copy button."""
+            # Increment button counter for unique key
+            st.session_state.button_count += 1
+            button_key = f"copy_button_{st.session_state.button_count}"
+            
+            # Create columns for code and button
+            cols = st.columns([12, 1])
+            
+            # Display code in the first column
+            with cols[0]:
+                st.code(sql_code, language='sql')
+            
+            # Display copy button in the second column
+            with cols[1]:
+                if st.button("📋", key=button_key, help="Copy to query editor"):
+                    st.session_state.query = sql_code
+                    st.rerun()
+        
+        # Split content into text and code blocks
         import re
         
-        # Split the response into parts based on SQL code blocks
+        # First, handle any SQL blocks that use ```sql format
         parts = re.split(r'(```sql[\s\S]*?```)', suggestions)
         
-        result = []
         for part in parts:
             if part.startswith('```sql'):
-                # Extract the SQL code without the markers
+                # Extract SQL code without the markers
                 sql_code = part.replace('```sql', '').replace('```', '').strip()
-                
-                # Create a container for the SQL code and copy button
-                col1, col2 = st.columns([10, 1])
-                with col1:
-                    st.code(sql_code, language='sql')
-                with col2:
-                    if st.button('📋', help='Copy query to clipboard'):
-                        st.session_state.query = sql_code
-                        st.rerun()
+                display_sql_block(sql_code)
             else:
-                st.markdown(part)
+                # Look for SQL statements that might not be properly wrapped
+                # This handles cases where the AI might not have properly formatted the SQL
+                sql_matches = re.finditer(r'(?m)^(?:SELECT|CREATE|INSERT|UPDATE|DELETE|ALTER|DROP|MERGE|WITH)\s+.*?;', part, re.IGNORECASE | re.MULTILINE)
+                
+                last_end = 0
+                for match in sql_matches:
+                    # Output any text before this SQL block
+                    if match.start() > last_end:
+                        st.markdown(part[last_end:match.start()])
+                    
+                    # Display the SQL block with copy button
+                    sql_code = match.group().strip()
+                    display_sql_block(sql_code)
+                    
+                    last_end = match.end()
+                
+                # Output any remaining text
+                if last_end < len(part):
+                    st.markdown(part[last_end:])
         
-        return ""  # Return empty string since we're handling the display directly
+        return ""
         
     except Exception as e:
         return f"❌ Error getting optimization suggestions: {str(e)}"
