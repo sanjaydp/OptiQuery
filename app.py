@@ -1034,7 +1034,6 @@ def show_db_connection_form():
                 st.text(st.session_state.schema_summary)
 
 def main():
-    st.title("OptiQuery: SQL Optimizer Assistant")
     
     # Initialize database connection state if not exists
     if 'db_initialized' not in st.session_state:
