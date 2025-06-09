@@ -551,16 +551,13 @@ def get_query_plan(connection, query: str) -> str:
         cursor.close()
 
 def display_sql_with_copy(sql_code: str, key_suffix: str = ""):
-    """Display a SQL code block with a copy button."""
-    container = st.container()
-    with container:
-        col1, col2 = st.columns([20, 1])
-        with col1:
-            st.code(sql_code, language='sql')
-        with col2:
-            if st.button("📋", key=f"copy_{key_suffix}_{hash(sql_code)}", help="Copy to query editor"):
-                st.session_state.query = sql_code
-                st.rerun()
+    """Display a SQL code block with a copy button at the bottom left."""
+    st.code(sql_code, language='sql')
+    col1, col2, col3 = st.columns([1, 15, 1])
+    with col1:
+        if st.button("📋 Copy SQL", key=f"copy_{key_suffix}_{hash(sql_code)}", help="Copy to query editor"):
+            st.session_state.query = sql_code
+            st.rerun()
 
 def optimize_query(query: str) -> str:
     """Get optimization suggestions for the query using OpenAI."""
@@ -661,6 +658,7 @@ Please provide specific, actionable recommendations with example queries where r
             else:  # SQL content
                 sql_code = part.strip()
                 display_sql_with_copy(sql_code, f"opt_{i}")
+                st.markdown("---")  # Add a separator between suggestions
         
         return ""
         
