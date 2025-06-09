@@ -555,9 +555,18 @@ def display_sql_with_copy(sql_code: str, key_suffix: str = ""):
     st.code(sql_code, language='sql')
     col1, col2, col3 = st.columns([1, 15, 1])
     with col1:
-        if st.button("📋 Copy SQL", key=f"copy_{key_suffix}_{hash(sql_code)}", help="Copy to query editor"):
+        button_key = f"copy_{key_suffix}_{hash(sql_code)}"
+        if button_key not in st.session_state:
+            st.session_state[button_key] = False
+            
+        if st.button("📋 Copy SQL", key=button_key, help="Copy to query editor"):
             st.session_state.query = sql_code
-            st.rerun()
+            st.session_state[button_key] = True
+            
+        if st.session_state[button_key]:
+            st.success("Copied to editor!")
+            # Reset the state after showing success message
+            st.session_state[button_key] = False
 
 def optimize_query(query: str) -> str:
     """Get optimization suggestions for the query using OpenAI."""
@@ -818,12 +827,15 @@ def update_query_history(query: str, performance_metrics: dict = None):
 def analyze_query(query: str, perform_syntax_check: bool = True, perform_analysis: bool = True) -> str:
     """Analyze the SQL query for syntax and performance."""
     try:
+        # Store the current query in session state to preserve it
+        if 'current_analysis_query' not in st.session_state:
+            st.session_state.current_analysis_query = query
+        
         connection = get_database_connection()
         if not connection:
             return "❌ No database connection available. Please connect to a database first."
 
         cursor = connection.cursor()
-        results = []
 
         try:
             if perform_syntax_check:
