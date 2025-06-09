@@ -604,6 +604,11 @@ Focus on:
 3. Potential issues
 4. Index recommendations
 
+For each optimization suggestion that includes a query, wrap the SQL code in triple backticks with sql language specification like this:
+```sql
+SELECT * FROM table;
+```
+
 Database Schema:
 {schema}
 
@@ -613,7 +618,7 @@ Provide your response in markdown format with clear sections."""
 
 {query}
 
-Please provide specific, actionable recommendations."""
+Please provide specific, actionable recommendations with example queries where relevant."""
         
         # Call OpenAI API with the new client format
         client = openai.OpenAI(api_key=st.session_state.openai_api_key)
@@ -625,8 +630,33 @@ Please provide specific, actionable recommendations."""
             ]
         )
         
-        # Extract and return the optimization suggestions
-        return response.choices[0].message.content
+        # Extract and process the optimization suggestions
+        suggestions = response.choices[0].message.content
+        
+        # Process the response to add copy buttons for SQL code blocks
+        import re
+        
+        # Split the response into parts based on SQL code blocks
+        parts = re.split(r'(```sql[\s\S]*?```)', suggestions)
+        
+        result = []
+        for part in parts:
+            if part.startswith('```sql'):
+                # Extract the SQL code without the markers
+                sql_code = part.replace('```sql', '').replace('```', '').strip()
+                
+                # Create a container for the SQL code and copy button
+                col1, col2 = st.columns([10, 1])
+                with col1:
+                    st.code(sql_code, language='sql')
+                with col2:
+                    if st.button('📋', help='Copy query to clipboard'):
+                        st.session_state.query = sql_code
+                        st.rerun()
+            else:
+                st.markdown(part)
+        
+        return ""  # Return empty string since we're handling the display directly
         
     except Exception as e:
         return f"❌ Error getting optimization suggestions: {str(e)}"
